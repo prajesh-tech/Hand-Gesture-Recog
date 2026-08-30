@@ -1,113 +1,127 @@
-"""Persistence and validation for user-specific HSV calibration ranges."""
+"""
+Calibration utilities for saving and loading user's HSV thresholds.
+Persists calibration data to config/hsv_calibration.json.
+"""
 
 import json
 import os
-from typing import Sequence
 
 import numpy as np
 
 
 class CalibrationManager:
-    """Handle validated save/load of the HSV calibration used by the application."""
-
+    """Handle save/load of user's HSV calibration data."""
+    
     CONFIG_DIR = "config"
     CALIBRATION_FILE = os.path.join(CONFIG_DIR, "hsv_calibration.json")
-
+    
     @staticmethod
     def ensure_config_dir_exists() -> None:
-        """Create the local configuration directory when needed."""
+        """Create config directory if it doesn't exist."""
         os.makedirs(CalibrationManager.CONFIG_DIR, exist_ok=True)
-
+    
     @staticmethod
     def calibration_exists() -> bool:
-        """Return whether a calibration file is present."""
-        return os.path.isfile(CalibrationManager.CALIBRATION_FILE)
-
+        """Check if calibration data has been saved."""
+        return os.path.exists(CalibrationManager.CALIBRATION_FILE)
+    
     @staticmethod
-    def _normalise_hsv_range(lower_hsv: Sequence[int] | np.ndarray, upper_hsv: Sequence[int] | np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-        """Validate an HSV range before converting it to ``uint8``.
-
-        Hue may wrap around OpenCV's 0/180 boundary, so a lower hue greater than
-        the upper hue is valid. Saturation and value may not wrap.
+    def save_calibration(lower_hsv: np.ndarray, upper_hsv: np.ndarray) -> bool:
+        """
+        Save HSV thresholds to calibration file.
+        
+        Args:
+            lower_hsv: Lower HSV threshold (3-element array)
+            upper_hsv: Upper HSV threshold (3-element array)
+        
+        Returns:
+            True if successful, False otherwise
         """
         try:
-            lower = np.asarray(lower_hsv, dtype=np.int16).reshape(-1)
-            upper = np.asarray(upper_hsv, dtype=np.int16).reshape(-1)
-        except (TypeError, ValueError):
-            return None
-        if lower.shape != (3,) or upper.shape != (3,):
-            return None
-        if not (0 <= lower[0] <= 180 and 0 <= upper[0] <= 180):
-            return None
-        if not (20 <= lower[1] <= 255 and 0 <= upper[1] <= 255):
-            return None
-        if not (30 <= lower[2] <= 255 and 0 <= upper[2] <= 255):
-            return None
-        if lower[1] > upper[1] or lower[2] > upper[2]:
-            return None
-        return lower.astype(np.uint8), upper.astype(np.uint8)
-
-    @staticmethod
-    def save_calibration(lower_hsv: np.ndarray, upper_hsv: np.ndarray, skin_model: dict | None = None) -> bool:
-        """Save a validated HSV range, returning ``False`` on a recoverable error."""
-        normalised = CalibrationManager._normalise_hsv_range(lower_hsv, upper_hsv)
-        if normalised is None:
-            print("Calibration was not saved: invalid HSV range.")
-            return False
-        lower, upper = normalised
-        try:
             CalibrationManager.ensure_config_dir_exists()
-            data = {"lower_hsv": lower.tolist(), "upper_hsv": upper.tolist()}
-            if skin_model is not None:
-                data["skin_model"] = skin_model
-            with open(CalibrationManager.CALIBRATION_FILE, "w", encoding="utf-8") as file:
-                json.dump(data, file, indent=2)
-            print(f"Calibration saved to {CalibrationManager.CALIBRATION_FILE}")
+            
+            data = {
+                'lower_hsv': lower_hsv.tolist(),
+                'upper_hsv': upper_hsv.tolist()
+            }
+            
+            with open(CalibrationManager.CALIBRATION_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            print(f"✓ Calibration saved to {CalibrationManager.CALIBRATION_FILE}")
             return True
-        except (OSError, TypeError, ValueError) as error:
-            print(f"Failed to save calibration: {error}")
+        
+        except Exception as e:  # noqa: BLE001
+            print(f"✗ Failed to save calibration: {e!s}")
             return False
-
+    
     @staticmethod
     def load_calibration() -> tuple[np.ndarray, np.ndarray] | None:
-        """Load a valid range or return ``None`` so the caller can recalibrate."""
+        """
+        Load HSV thresholds from calibration file.
+        
+        Returns:
+            Tuple of (lower_hsv, upper_hsv) or None if file doesn't exist or is invalid
+        """
         if not CalibrationManager.calibration_exists():
             return None
+        
         try:
-            with open(CalibrationManager.CALIBRATION_FILE, encoding="utf-8") as file:
-                data = json.load(file)
-            normalised = CalibrationManager._normalise_hsv_range(data["lower_hsv"], data["upper_hsv"])
-        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-            print(f"Failed to load calibration: {error}")
-            return None
-        if normalised is None:
-            print("Saved calibration is invalid; recalibration is required.")
-        return normalised
-
-    @staticmethod
-    def load_skin_model() -> dict | None:
-        """Load a persisted statistical skin model, or require recalibration."""
-        if not CalibrationManager.calibration_exists():
-            return None
-        try:
-            with open(CalibrationManager.CALIBRATION_FILE, encoding="utf-8") as file:
-                model = json.load(file)["skin_model"]
-            center = np.asarray(model["center"], dtype=float).reshape(-1)
-            scale = np.asarray(model["scale"], dtype=float).reshape(-1)
-            if center.shape != (3,) or scale.shape != (3,) or np.any(scale <= 0):
+            with open(CalibrationManager.CALIBRATION_FILE, 'r') as f:
+                data = json.load(f)
+            
+            lower = np.array(data['lower_hsv'], dtype=np.uint8)
+            upper = np.array(data['upper_hsv'], dtype=np.uint8)
+            
+            # Validate HSV ranges
+            if not CalibrationManager._is_valid_hsv_range(lower, upper):
+                print("⚠ Loaded calibration is INVALID:")
+                print(f"  Lower: {list(lower)}")
+                print(f"  Upper: {list(upper)}")
+                print("  HSV Hue must be 0-180 in OpenCV!")
+                print("  Returning None to force recalibration...")
                 return None
-            return {"center": center.tolist(), "scale": scale.tolist()}
-        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            
+            return lower, upper
+        
+        except Exception as e:  # noqa: BLE001
+            print(f"✗ Failed to load calibration: {e!s}")
             return None
-
+    
+    @staticmethod
+    def _is_valid_hsv_range(lower: np.ndarray, upper: np.ndarray) -> bool:
+        """
+        Validate HSV range for OpenCV conventions.
+        
+        Args:
+            lower: Lower HSV threshold [H, S, V]
+            upper: Upper HSV threshold [H, S, V]
+        
+        Returns:
+            True if range is valid, False otherwise
+        """
+        # Hue channel: 0-180 in OpenCV
+        if lower[0] > 180 or upper[0] > 180:
+            return False
+        
+        # Saturation and Value: 0-255
+        if any(v > 255 for v in lower) or any(v > 255 for v in upper):
+            return False
+        
+        # Lower should generally be <= upper (some tolerance for wrapping hue)
+        if lower[1] > upper[1] + 20 or lower[2] > upper[2] + 20:  # S and V  # noqa: SIM103
+            return False
+        
+        return True
+    
     @staticmethod
     def delete_calibration() -> bool:
-        """Delete the calibration file, forcing calibration on the next start."""
+        """Delete calibration file (forces re-calibration on next run)."""
         try:
-            if CalibrationManager.calibration_exists():
+            if os.path.exists(CalibrationManager.CALIBRATION_FILE):
                 os.remove(CalibrationManager.CALIBRATION_FILE)
-                print(f"Calibration deleted: {CalibrationManager.CALIBRATION_FILE}")
+                print(f"✓ Calibration deleted: {CalibrationManager.CALIBRATION_FILE}")
             return True
-        except OSError as error:
-            print(f"Failed to delete calibration: {error}")
+        except Exception as e:  # noqa: BLE001
+            print(f"✗ Failed to delete calibration: {e!s}")
             return False
