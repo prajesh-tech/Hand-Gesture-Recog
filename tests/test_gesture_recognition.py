@@ -110,7 +110,7 @@ class TestGestureRecognizer:
     
     def test_recognize_gesture_returns_string_or_none(self, recognizer):
         """Test that recognize_gesture returns valid gesture labels."""
-        valid_gestures = {None, "Fist", "Open Palm", "One Finger", "Two Fingers"}
+        valid_gestures = {None, "Unknown", "Fist", "Open Palm", "One Finger", "Two Fingers"}
         
         mask = np.zeros((300, 300), dtype=np.uint8)
         cv2.circle(mask, (150, 150), 80, 255, -1)
@@ -153,4 +153,21 @@ class TestGestureClassification:
         if contours:
             gesture = recognizer.recognize_gesture(contours[0])
             # Could be any valid gesture or None depending on thresholds and actual features
-            assert gesture in {None, "Fist", "One Finger", "Two Fingers", "Open Palm"}
+            assert gesture in {"Unknown", "Fist", "One Finger", "Two Fingers", "Open Palm"}
+
+    def test_classifies_feature_combinations_and_unknown(self):
+        recognizer = GestureRecognizer()
+        base = {"area": 5000.0, "solidity": 0.9, "extent": 0.7, "elongation": 1.0}
+        assert recognizer._classify_by_features(base | {"convexity_defects_count": 0}) == "Fist"
+        assert recognizer._classify_by_features(base | {"convexity_defects_count": 3, "solidity": 0.7}) == "Open Palm"
+        assert recognizer._classify_by_features(base | {"convexity_defects_count": 0, "elongation": 2.3}) == "One Finger"
+        assert recognizer._classify_by_features(base | {"convexity_defects_count": 1, "elongation": 1.5}) == "Two Fingers"
+        assert recognizer._classify_by_features(base | {"convexity_defects_count": 2, "elongation": 1.0}) == "Unknown"
+
+    def test_concave_contour_reports_significant_defect(self):
+        recognizer = GestureRecognizer({"min_defect_depth": 2.0})
+        contour = np.array([[[0, 0]], [[80, 0]], [[80, 80]], [[40, 35]], [[0, 80]]], dtype=np.int32)
+        features = recognizer.extract_features(contour)
+        assert features is not None
+        assert features["convexity_defects_count"] >= 1
+        assert features["perimeter_area_ratio"] > 0

@@ -3,9 +3,10 @@ Skin detection module using HSV color space thresholding.
 Provides HSV-based skin color segmentation with morphological cleanup.
 """
 
+from typing import Tuple  # noqa: F401, UP035
+
 import cv2
 import numpy as np
-from typing import Tuple, Optional
 
 
 class SkinDetector:
@@ -15,8 +16,8 @@ class SkinDetector:
     DEFAULT_LOWER_HSV = np.array([0, 10, 60], dtype=np.uint8)
     DEFAULT_UPPER_HSV = np.array([20, 150, 255], dtype=np.uint8)
     
-    def __init__(self, lower_hsv: Optional[np.ndarray] = None, 
-                 upper_hsv: Optional[np.ndarray] = None,
+    def __init__(self, lower_hsv: np.ndarray | None = None, 
+                 upper_hsv: np.ndarray | None = None,
                  morphology_kernel_size: int = 5):
         """
         Initialize skin detector.
@@ -107,12 +108,12 @@ class SkinDetector:
         mask = self.apply_morphology(mask, operation=morphology_op)
         return mask
     
-    def get_hsv_range(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_hsv_range(self) -> tuple[np.ndarray, np.ndarray]:
         """Get current HSV thresholds."""
         return self.lower_hsv.copy(), self.upper_hsv.copy()
     
     @staticmethod
-    def extract_hsv_from_region(frame_bgr: np.ndarray, region_mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def extract_hsv_from_region(frame_bgr: np.ndarray, region_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute HSV range from pixels in a specific region (for calibration).
         
@@ -136,8 +137,24 @@ class SkinDetector:
         lower = hsv_values.min(axis=0).astype(np.uint8)
         upper = hsv_values.max(axis=0).astype(np.uint8)
         
-        # Add small margin for tolerance
-        lower = np.maximum(lower - 10, 0).astype(np.uint8)
-        upper = np.minimum(upper + 10, 255).astype(np.uint8)
+        # ✨ CRITICAL FIX: Clamp Hue to 0-180 range (OpenCV convention)
+        # If Hue values seem out of range, they may have been uint8-wrapped
+        if lower[0] > 180:
+            lower[0] = max(0, lower[0] - 256)
+        if upper[0] > 180:
+            upper[0] = min(180, upper[0])
+        
+        # Add small margin for tolerance (but respect OpenCV bounds)
+        lower = np.array([
+            max(0, lower[0] - 10) if lower[0] <= 180 else 0,
+            max(0, lower[1] - 10),
+            max(0, lower[2] - 10)
+        ], dtype=np.uint8)
+        
+        upper = np.array([
+            min(180, upper[0] + 10),  # Hue: 0-180
+            min(255, upper[1] + 10),  # Saturation: 0-255
+            min(255, upper[2] + 10)   # Value: 0-255
+        ], dtype=np.uint8)
         
         return lower, upper

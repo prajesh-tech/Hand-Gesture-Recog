@@ -117,3 +117,33 @@ class TestSkinDetector:
         # Should return default values
         assert lower is not None
         assert upper is not None
+
+    def test_hue_wrap_range_detects_both_red_boundaries(self):
+        detector = SkinDetector(
+            np.array([170, 100, 100], dtype=np.uint8),
+            np.array([10, 255, 255], dtype=np.uint8),
+            blur_kernel_size=0,
+        )
+        hsv = np.array([[[175, 200, 200], [5, 200, 200], [40, 200, 200]]], dtype=np.uint8)
+        frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        assert detector.detect_skin(frame)[0].tolist() == [255, 255, 0]
+
+    def test_invalid_frame_and_morphology_operation_raise_value_error(self, detector):
+        with pytest.raises(ValueError):
+            detector.detect_skin(np.empty((0, 0, 3), dtype=np.uint8))
+        with pytest.raises(ValueError):
+            detector.apply_morphology(np.zeros((10, 10), dtype=np.uint8), "invalid")
+
+    def test_percentile_calibration_ignores_dark_background(self):
+        frame = np.zeros((20, 20, 3), dtype=np.uint8)
+        frame[5:15, 5:15] = (80, 110, 180)
+        lower, upper = SkinDetector.extract_hsv_from_region(frame, np.full((20, 20), 255, dtype=np.uint8))
+        assert lower[1] >= 20
+        assert lower[2] >= 30
+        assert np.all(lower <= upper) or lower[0] > upper[0]
+
+    def test_calibration_pixel_count_excludes_dark_and_desaturated_pixels(self):
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        frame[2:8, 2:8] = (80, 110, 180)
+        count = SkinDetector.valid_calibration_pixel_count(frame, np.full((10, 10), 255, dtype=np.uint8))
+        assert count == 36

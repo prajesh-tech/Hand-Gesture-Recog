@@ -58,6 +58,27 @@ class TestHandDetector:
         area = cv2.contourArea(contour)
         # Should be the large circle (area ~pi*60^2 ≈ 11300)
         assert area > 10000
+
+    def test_find_hand_contour_rejects_near_full_frame_background(self):
+        detector = HandDetector(min_contour_area=100, min_contour_area_ratio=0.0, max_contour_area_ratio=0.80)
+        mask = np.full((200, 200), 255, dtype=np.uint8)
+        cv2.circle(mask, (100, 100), 25, 0, -1)
+        assert detector.find_hand_contour(mask) is None
+
+    def test_find_hand_contour_uses_resolution_scaled_minimum_area(self):
+        detector = HandDetector(min_contour_area=10, min_contour_area_ratio=0.10)
+        mask = np.zeros((100, 100), dtype=np.uint8)
+        cv2.circle(mask, (50, 50), 10, 255, -1)
+        assert detector.find_hand_contour(mask) is None
+
+    def test_analyze_mask_reports_contour_filtering_diagnostics(self):
+        detector = HandDetector(min_contour_area=100, min_contour_area_ratio=0.0)
+        mask = np.zeros((200, 200), dtype=np.uint8)
+        cv2.circle(mask, (100, 100), 30, 255, -1)
+        analysis = detector.analyze_mask(mask)
+        assert analysis["contour_count"] == 1
+        assert analysis["plausible_contour_count"] == 1
+        assert analysis["selected_contour"] is not None
     
     def test_filter_contours(self, detector):
         """Test filtering contours by area."""

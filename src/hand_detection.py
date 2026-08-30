@@ -11,14 +11,20 @@ from typing import Optional, List, Tuple
 class HandDetector:
     """Detect and isolate hand contour from skin segmentation mask."""
     
-    def __init__(self, min_contour_area: float = 500):
+    def __init__(self, min_contour_area: float = 500,
+                 min_contour_area_ratio: float = 0.005,
+                 max_contour_area_ratio: float = 0.80):
         """
         Initialize hand detector.
         
         Args:
-            min_contour_area: Minimum contour area to consider as a valid hand
+            min_contour_area: Absolute minimum contour area to consider as a hand
+            min_contour_area_ratio: Resolution-scaled minimum area fraction
+            max_contour_area_ratio: Reject near-full-frame skin regions as background
         """
         self.min_contour_area = min_contour_area
+        self.min_contour_area_ratio = max(0.0, min_contour_area_ratio)
+        self.max_contour_area_ratio = min(1.0, max(0.01, max_contour_area_ratio))
     
     def find_hand_contour(self, mask: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -30,22 +36,37 @@ class HandDetector:
         Returns:
             Largest contour (numpy array) or None if no valid contour found
         """
-        # Find all contours in the mask
+        return self.analyze_mask(mask)["selected_contour"]
+
+    def analyze_mask(self, mask: np.ndarray) -> dict:
+        """Return contour-selection diagnostics and the most plausible hand contour."""
+        if not isinstance(mask, np.ndarray) or mask.ndim != 2:
+            raise ValueError("mask must be a two-dimensional binary image")
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
-            return None
-        
-        # Filter contours by minimum area
-        valid_contours = [c for c in contours if cv2.contourArea(c) >= self.min_contour_area]
-        
-        if not valid_contours:
-            return None
-        
-        # Return the largest contour (most likely the hand)
-        hand_contour = max(valid_contours, key=cv2.contourArea)
-        
-        return hand_contour
+        frame_area = float(mask.shape[0] * mask.shape[1])
+        minimum_area = max(self.min_contour_area, frame_area * self.min_contour_area_ratio)
+        maximum_area = frame_area * self.max_contour_area_ratio
+        plausible = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if not minimum_area <= area <= maximum_area:
+                continue
+            _, _, width, height = cv2.boundingRect(contour)
+            aspect_ratio = width / height if height else 0.0
+            # Reject lines and full-width/height background strips while allowing fingers.
+            if not 0.12 <= aspect_ratio <= 8.0:
+                continue
+            if width >= mask.shape[1] * 0.98 or height >= mask.shape[0] * 0.98:
+                continue
+            plausible.append(contour)
+        selected = max(plausible, key=cv2.contourArea) if plausible else None
+        return {
+            "contour_count": len(contours),
+            "plausible_contour_count": len(plausible),
+            "minimum_area": minimum_area,
+            "maximum_area": maximum_area,
+            "selected_contour": selected,
+        }
     
     def filter_contours(self, contours: List[np.ndarray], min_area: Optional[float] = None) -> List[np.ndarray]:
         """

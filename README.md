@@ -164,28 +164,48 @@ The application will:
    - Press `q` to quit
    - Press `c` to recalibrate
 
+### Calibration and Diagnostic Workflow
+
+Place your palm so that it fills most of the centre ROI but does not touch its
+edges. Use an evenly lit area and avoid skin-coloured objects behind the ROI.
+Calibration discards very dark and desaturated pixels, then uses percentile
+bounds with a tolerance margin; this is less sensitive to a few background
+pixels than a raw min/max range. Recalibrate with `C` whenever lighting changes.
+
+For pipeline diagnostics after calibration, run:
+
+```bash
+python src/main_debug.py
+```
+
+It opens the camera frame with its selected contour and feature values, plus
+separate raw and cleaned HSV-mask windows. It displays raw and smoothed gesture
+labels, current HSV bounds, and measured FPS. Press `Q` to exit. Use these
+values to tune `GestureRecognizer.THRESHOLDS`; synthetic tests only validate
+pipeline behaviour, not real-world recognition accuracy.
+
 ---
 
 ## 🖐️ Supported Gestures
 
 ### 1. **Fist** → **STOP**
 - **Appearance**: Closed hand, compact shape
-- **Features**: High solidity (>0.75), few convex defects (<3), good extent
+- **Features**: Compact contour, high solidity and extent, with no significant defects
 - **Use Case**: Stop or deactivate current action
 
 ### 2. **Open Palm** → **START**
 - **Appearance**: Fingers spread, low compactness
-- **Features**: Low solidity (<0.65), many defects (>6 from finger indentations), large area
+- **Features**: Several deep finger valleys (convexity defects) and lower solidity
 - **Use Case**: Start or activate action
 
 ### 3. **One Finger** → **SELECT**
 - **Appearance**: Single finger pointing, elongated
-- **Features**: Small area (<15000 px), very few defects (0-3), elongated aspect ratio
+- **Features**: Elongated contour with at most one significant defect
 - **Use Case**: Select item or navigate
 
 ### 4. **Two Fingers** → **NEXT**
 - **Appearance**: Two fingers (peace sign or index+middle)
-- **Features**: Moderate area (<25000 px), 2-4 defects, moderate solidity
+- **Features**: Moderately elongated contour with one or two significant defects
 - **Use Case**: Move to next item or advance
 
 ---
@@ -207,6 +227,10 @@ The application will:
    - **Opening** (erode then dilate): removes small noise spots
    - **Closing** (dilate then erode): fills small holes in detected regions
 
+Hue ranges crossing OpenCV's 0/180 boundary are supported. Blur-kernel size,
+morphology kernel size, and opening/closing iterations are constructor settings
+on `SkinDetector`; use smaller kernels when fine finger gaps are being removed.
+
 ### Contour Detection
 - Find all connected white regions (contours) in binary mask
 - Filter by minimum area (ignore tiny noise)
@@ -216,17 +240,20 @@ The application will:
 
 | Gesture | Solidity | Defects | Extent | Aspect Ratio | Area |
 |---------|----------|---------|--------|--------------|------|
-| **Fist** | >0.75 | <3 | >0.5 | 0.3-3.5 | Any |
-| **Open Palm** | <0.65 | >6 | >0.3 | 0.3-3.5 | Large |
-| **One Finger** | Any | 0-3 | Any | >0.8 | <15k |
-| **Two Fingers** | Any | 2-4 | Any | 0.3-3.5 | <25k |
+| **Fist** | High | 0 | High | Compact | Valid hand |
+| **Open Palm** | Lower | 3+ | Variable | Variable | Valid hand |
+| **One Finger** | Variable | 0-1 | Variable | Highly elongated | Valid hand |
+| **Two Fingers** | Variable | 1-2 | Variable | Moderately elongated | Valid hand |
+
+A valid contour that does not match a rule is displayed as **Unknown Gesture**.
+`No Hand Detected` is reserved for empty or undersized contours.
 
 **These thresholds are starting points and should be tuned based on your environment**, camera, and hand size. See "Threshold Tuning" section below.
 
 ### Temporal Smoothing
 Without smoothing, classifications would flicker frame-to-frame due to slight contour variations. Solution:
-1. Store last N gesture predictions in a buffer (default: 10 frames)
-2. Use majority voting: output a gesture only if M frames agree (default: 5)
+1. Store the last 8 gesture predictions in a buffer
+2. Use majority voting: output a gesture only when 4 frames agree
 3. Example:
    - Frames 1-3: [Fist, Fist, Open Palm] → no consensus yet, output: None
    - Frames 1-5: [Fist, Fist, Fist, Fist, Open Palm] → Fist has 4/5, still not 5 → output: None
@@ -352,7 +379,7 @@ pytest tests/test_integration.py::TestIntegrationSyntheticHands::test_full_pipel
 
 ### Issue: Gestures flicker rapidly
 - **Cause**: Temporal smoothing threshold too high for your environment
-- **Solution**: Modify `GestureHistory(buffer_size=10, consensus_threshold=5)` in `main.py`
+- **Solution**: Tune `GestureHistory(buffer_size=8, consensus_threshold=4)` in `main.py`
 
 ### Issue: Performance is slow (FPS < 15)
 - **Cause**: Frame size too large or CPU limited
