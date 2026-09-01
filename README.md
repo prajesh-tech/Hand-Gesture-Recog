@@ -15,7 +15,7 @@ This application captures video from a webcam, detects the user's hand using HSV
 - ✅ **"No Hand Detected" state** instead of forced classification
 - ✅ **Real-time FPS measurement and display**
 - ✅ **Modular, explainable architecture** suitable for viva discussion
-- ✅ **Comprehensive unit and integration tests** (50 tests, all passing)
+- ✅ **Comprehensive unit and integration tests** (77 tests, all passing)
 
 ---
 
@@ -321,6 +321,10 @@ hand-gesture-recognition/
 │   ├── test_hand_detection.py
 │   ├── test_gesture_recognition.py
 │   ├── test_gesture_history.py
+│   ├── test_calibration.py
+│   ├── test_improved_segmentation.py
+│   ├── test_improvements.py
+│   ├── test_main_console.py
 │   └── test_integration.py
 ├── config/
 │   └── hsv_calibration.json    # User's calibrated HSV thresholds (created at runtime, Git-ignored)
@@ -335,14 +339,13 @@ hand-gesture-recognition/
 
 ### Run All Tests
 ```bash
-source venv/bin/activate
-pytest tests/ -v
+./venv/bin/pytest -v
 ```
 
 ### Test Coverage
-- **Unit tests**: Skin detection, hand detection, gesture recognition, gesture history (50 tests)
-- **Integration tests**: Full pipeline with synthetic hand-like shapes, robustness checks
-- **All tests pass**: ✅ 50/50 passing
+- **Unit tests**: Skin detection, hand detection, gesture recognition, gesture history, calibration (62 tests)
+- **Integration & Regression tests**: Synthetic hands, contour scoring, pipeline robustness, console safety (15 tests)
+- **All tests pass**: ✅ 77/77 passing
 
 ### Running Specific Tests
 ```bash
@@ -473,7 +476,7 @@ This project is provided as-is for educational and research purposes. Adapt and 
 - [x] Temporal smoothing (consensus voting)
 - [x] Action mapping and display
 - [x] Real-time FPS measurement
-- [x] 50 unit + integration tests (all passing)
+- [x] 77 unit + integration tests (all passing)
 - [x] Comprehensive documentation
 - [x] Code is modular and explainable
 - [x] Git-ignored calibration file (not in repository)

@@ -1,6 +1,6 @@
 """
-Debug version of main.py that prints detailed information.
-Run this to see what's happening with calibration and hand detection.
+Debug version of main.py that displays comprehensive real-time diagnostics.
+Shows raw/clean skin pixel counts, percentages, HSV bounds, contour counts, and metrics.
 """
 
 import os
@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 # Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.calibration import CalibrationManager
 from src.camera import CameraCapture
@@ -18,116 +18,119 @@ from src.hand_detection import HandDetector
 from src.skin_detection import SkinDetector
 
 
-def debug_run():
+def debug_run() -> None:
     """Main debug loop."""
-    # Initialize camera
-    camera = CameraCapture(target_width=640, target_height=480)
+    frame_w, frame_h = 640, 480
+    camera = CameraCapture(target_width=frame_w, target_height=frame_h)
     print("✓ Camera initialized")
-    
-    # Load or calibrate
+
     calibration = CalibrationManager.load_calibration()
     if calibration:
         lower, upper = calibration
-        print(f"✓ Loaded calibration: Lower={lower}, Upper={upper}")
+        skin_model = CalibrationManager.load_skin_model()
+        print(f"✓ Loaded calibration: Lower={list(lower)}, Upper={list(upper)}")
     else:
-        print("✗ No calibration found. Please delete config/hsv_calibration.json and run main.py first")
-        return
-    
-    skin_detector = SkinDetector()
-    skin_detector.set_hsv_range(lower, upper)
-    hand_detector = HandDetector(min_contour_area=500)
-    
+        print("⚠ No saved calibration found. Using default HSV thresholds.")
+        lower, upper = SkinDetector.DEFAULT_LOWER_HSV.copy(), SkinDetector.DEFAULT_UPPER_HSV.copy()
+        skin_model = None
+
+    skin_detector = SkinDetector(lower, upper, statistical_model=skin_model)
+    hand_detector = HandDetector(
+        min_contour_area=500,
+        frame_width=frame_w,
+        frame_height=frame_h,
+    )
+
     print("\n📊 DEBUG MODE - Real-time Analysis")
     print("=" * 60)
     print("Press 'q' to quit")
     print("=" * 60)
-    
+
     frame_count = 0
-    
+
     while True:
         ret, frame = camera.get_frame()
         if not ret:
             print("✗ Camera error")
             break
-        
+
         frame_count += 1
-        
-        # 1. Convert to HSV
-        frame_blurred = cv2.GaussianBlur(frame, (5, 5), 0)
-        frame_hsv = cv2.cvtColor(frame_blurred, cv2.COLOR_BGR2HSV)  # noqa: F841
-        
-        # 2. Skin detection
-        skin_mask = skin_detector.detect_skin(frame_blurred)
-        skin_mask_clean = skin_detector.apply_morphology(skin_mask, operation='both')
-        
-        # 3. Count pixels
-        skin_pixels = np.count_nonzero(skin_mask)
-        skin_pixels_clean = np.count_nonzero(skin_mask_clean)
-        
-        # 4. Hand detection
-        hand_contour = hand_detector.find_hand_contour(skin_mask_clean)
-        
-        # 5. Create output
+        h, w = frame.shape[:2]
+        total_pixels = float(h * w)
+
+        # 1. Skin detection
+        skin_mask_raw = skin_detector.detect_skin(frame)
+        skin_mask_clean = skin_detector.apply_morphology(skin_mask_raw, operation="both")
+
+        # 2. Pixel diagnostics
+        raw_pixels = int(np.count_nonzero(skin_mask_raw))
+        clean_pixels = int(np.count_nonzero(skin_mask_clean))
+        raw_pct = (100.0 * raw_pixels) / total_pixels
+        clean_pct = (100.0 * clean_pixels) / total_pixels
+
+        # 3. Hand detection & diagnostics
+        diag = hand_detector.get_diagnostic_info(skin_mask_clean)
+        selected_contour = diag.get("selected")
+        cand_count = diag.get("candidate_count", 0)
+        total_contours = diag.get("total_contours", 0)
+
+        # 4. Render overlay
         output = frame.copy()
-        
-        # Show statistics
-        text_y = 30
-        cv2.putText(output, f"Frame: {frame_count}", (10, text_y), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        text_y = 25
+
+        fps = camera.get_fps()
+        cv2.putText(output, f"Resolution: {w}x{h} | FPS: {fps:.1f}", (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        text_y += 22
+
+        cv2.putText(output, f"HSV Lower: {list(lower)} | Upper: {list(upper)}", (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 255), 1)
+        text_y += 22
+
+        cv2.putText(output, f"Raw Skin: {raw_pixels} px ({raw_pct:.1f}%)", (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+        text_y += 22
+
+        cv2.putText(output, f"Cleaned Skin: {clean_pixels} px ({clean_pct:.1f}%)", (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
         text_y += 25
-        
-        cv2.putText(output, f"Lower HSV: {list(lower)}", (10, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 255), 1)
-        text_y += 20
-        
-        cv2.putText(output, f"Upper HSV: {list(upper)}", (10, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 255), 1)
+
+        cv2.putText(output, f"Contours Total: {total_contours} | Candidates: {cand_count}", (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 200, 0), 1)
         text_y += 25
-        
-        cv2.putText(output, f"Skin pixels (raw): {skin_pixels}", (10, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        text_y += 25
-        
-        cv2.putText(output, f"Skin pixels (clean): {skin_pixels_clean}", (10, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        text_y += 30
-        
-        if hand_contour is not None:
-            area = cv2.contourArea(hand_contour)
-            perimeter = cv2.arcLength(hand_contour, True)
-            cv2.putText(output, f"✓ HAND DETECTED - Area: {area:.0f}", (10, text_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            text_y += 25
-            cv2.putText(output, f"  Perimeter: {perimeter:.0f}", (10, text_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 1)
-            
-            # Draw the hand
-            output = hand_detector.draw_both(output, hand_contour)
+
+        if selected_contour is not None:
+            area = diag["selected_area"]
+            perimeter = diag["selected_perimeter"]
+            cv2.putText(output, f"✓ HAND DETECTED - Area: {area:.0f} px | Perim: {perimeter:.0f} px",
+                        (10, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            output = hand_detector.draw_both(output, selected_contour)
         else:
             cv2.putText(output, "✗ NO HAND DETECTED", (10, text_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
-        # Show images
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
+
+        # Draw ROI overlay for calibration reference
+        roi_frame = frame.copy()
+        cy, cx = h // 2, w // 2
+        rh, rw = int(h * 0.25), int(w * 0.25)
+        cv2.rectangle(roi_frame, (cx - rw, cy - rh), (cx + rw, cy + rh), (0, 255, 0), 2)
+
+        # Show debug windows
         cv2.imshow("Main (with stats)", output)
-        cv2.imshow("Skin Mask (raw)", skin_mask)
+        cv2.imshow("Skin Mask (raw)", skin_mask_raw)
         cv2.imshow("Skin Mask (cleaned)", skin_mask_clean)
-        
-        # Print to console periodically
+        cv2.imshow("Calibration ROI", roi_frame)
+
         if frame_count % 30 == 0:
-            print(f"\n[Frame {frame_count}]")
-            print(f"  Skin pixels (raw): {skin_pixels}")
-            print(f"  Skin pixels (clean): {skin_pixels_clean}")
-            if hand_contour is not None:
-                print(f"  Hand detected: YES (area={area:.0f})")
-            else:
-                print("  Hand detected: NO")
-        
+            print(f"[Frame {frame_count}] Raw skin: {raw_pct:.1f}%, Cleaned: {clean_pct:.1f}%, Candidates: {cand_count}")
+
         key = cv2.waitKey(30) & 0xFF
-        if key == ord('q'):
+        if key == ord("q"):
             break
-    
+
     cv2.destroyAllWindows()
-    print("\n✓ Debug session ended")
+    camera.release()
+    print("✓ Debug session ended")
 
 
 if __name__ == "__main__":
