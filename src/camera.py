@@ -103,9 +103,10 @@ class CameraCapture:
     def get_frame_dimensions(self) -> Tuple[int, int]:
         """Get current frame dimensions (width, height) after any resizing."""
         if self.cap is None:
-            return self.target_width, self.target_height
+            return int(self.target_width * self.resize_factor), int(self.target_height * self.resize_factor)
         
-        return self.actual_width, self.actual_height
+        return int(self.actual_width * self.resize_factor), int(self.actual_height * self.resize_factor)
+
     
     def get_fps(self) -> float:
         """Get measured FPS from recent frames."""

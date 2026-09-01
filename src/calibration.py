@@ -107,35 +107,12 @@ class CalibrationManager:
     @staticmethod
     def _is_valid_hsv_range(lower: np.ndarray, upper: np.ndarray) -> bool:
         """
-        Validate HSV range for OpenCV conventions.
+        Validate HSV range using SkinDetector.is_valid_hsv_range.
         """
-        if len(lower) != 3 or len(upper) != 3:
-            return False
+        from src.skin_detection import SkinDetector
+        return SkinDetector.is_valid_hsv_range(lower, upper)
 
-        low_h, low_s, low_v = int(lower[0]), int(lower[1]), int(lower[2])
-        up_h, up_s, up_v = int(upper[0]), int(upper[1]), int(upper[2])
 
-        # Hue bounds: 0-180 in OpenCV
-        if low_h > 180 or up_h > 180:
-            return False
-
-        # Saturation & Value bounds: 0-255
-        if low_s > 255 or up_s > 255 or low_v > 255 or up_v > 255:
-            return False
-
-        # Saturation lower bound check: S >= 15 (reject background-prone low saturation ranges)
-        if low_s < 15:
-            return False
-
-        # Value lower bound check: V >= 30
-        if low_v < 30:
-            return False
-
-        # S and V lower should generally be <= upper
-        if low_s > up_s + 20 or low_v > up_v + 20:
-            return False
-
-        return True
 
     @staticmethod
     def delete_calibration() -> bool:

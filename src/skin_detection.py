@@ -327,12 +327,66 @@ class SkinDetector:
         lower = np.array([l_h, l_s, l_v], dtype=np.uint8)
         upper = np.array([u_h, u_s, u_v], dtype=np.uint8)
 
+        if not SkinDetector.is_valid_hsv_range(lower, upper):
+            diagnostics["calibration_valid"] = False
+            diagnostics["error"] = "Calibration result produced invalid or excessively broad HSV bounds"
+            return SkinDetector.DEFAULT_LOWER_HSV.copy(), SkinDetector.DEFAULT_UPPER_HSV.copy(), diagnostics
+
         diagnostics["hue_range"] = f"{l_h}-{u_h}"
         diagnostics["sat_range"] = f"{l_s}-{u_s}"
         diagnostics["val_range"] = f"{l_v}-{u_v}"
         diagnostics["calibration_valid"] = True
 
         return lower, upper, diagnostics
+
+    @staticmethod
+    def is_valid_hsv_range(lower: np.ndarray, upper: np.ndarray) -> bool:
+        """
+        Validate HSV range for OpenCV conventions (H: 0-180, S: 0-255, V: 0-255).
+        Supports both normal ranges (lower_h <= upper_h) and wrap-around ranges (lower_h > upper_h).
+        """
+        if lower is None or upper is None or len(lower) != 3 or len(upper) != 3:
+            return False
+
+        low_h, low_s, low_v = int(lower[0]), int(lower[1]), int(lower[2])
+        up_h, up_s, up_v = int(upper[0]), int(upper[1]), int(upper[2])
+
+        # Hue bounds: 0-180 in OpenCV
+        if low_h < 0 or low_h > 180 or up_h < 0 or up_h > 180:
+            return False
+
+        # Saturation & Value bounds: 0-255
+        if low_s < 0 or low_s > 255 or up_s < 0 or up_s > 255 or low_v < 0 or low_v > 255 or up_v < 0 or up_v > 255:
+            return False
+
+        # Saturation lower bound check: S >= 15 (reject background-prone low saturation ranges)
+        if low_s < 15:
+            return False
+
+        # Value lower bound check: V >= 30
+        if low_v < 30:
+            return False
+
+        # Saturation and Value lower bound must be <= upper bound
+        if low_s > up_s or low_v > up_v:
+            return False
+
+        # Hue range check: normal vs wrap-around
+        if low_h <= up_h:
+            hue_span = up_h - low_h
+        else:
+            # Wrap-around range: e.g. [162, 15, 40] to [16, 170, 255]
+            # Requires low_h in upper hue range (>= 120) and up_h in lower hue range (<= 60)
+            if low_h < 120 or up_h > 60:
+                return False
+            hue_span = (180 - low_h) + up_h
+
+        # Reject excessively broad hue ranges (e.g. > 110 degrees out of 180)
+        if hue_span > 110:
+            return False
+
+        return True
+
 
     @staticmethod
     def build_statistical_model(
