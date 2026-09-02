@@ -254,17 +254,28 @@ class HandGestureApp:
         # Step 2: Hand Detection
         hand_res = self.hand_detector.process_mask(skin_res.mask_clean)
 
-        # Step 3: Gesture Recognition & Confidence
-        hist_conf = self.gesture_history.get_confidence(self.gesture_history.last_output_gesture)
+        # Step 3: Extract features and classify the current contour.
         gesture_res = self.gesture_recognizer.process_gesture(
             contour=hand_res.selected_contour,
             contour_score=hand_res.score,
-            history_confidence=hist_conf,
+            history_confidence=0.0,
         )
 
-        # Step 4: Temporal History Smoothing
-        raw_gesture_for_history = gesture_res.gesture if hand_res.is_hand_detected else None
-        history_res = self.gesture_history.process_history(raw_gesture_for_history)
+        # Step 4: Update history with the raw classification before measuring
+        # temporal confidence for this frame.
+        raw_gesture = gesture_res.raw_gesture if hand_res.is_hand_detected else None
+        history_res = self.gesture_history.process_history(raw_gesture)
+
+        # Step 5: Recalculate confidence from the current raw gesture and the
+        # history state that already includes this frame.
+        updated_history_confidence = self.gesture_history.get_confidence(raw_gesture)
+        gesture_res.confidence = self.gesture_recognizer.calculate_confidence(
+            contour=hand_res.selected_contour,
+            contour_score=hand_res.score,
+            features=gesture_res.features,
+            gesture_label=gesture_res.raw_gesture,
+            history_confidence=updated_history_confidence,
+        )
 
         return DetectionFrameResult(
             frame=frame,

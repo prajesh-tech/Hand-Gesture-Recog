@@ -147,7 +147,9 @@ class GestureRecognizer:
             if 0.3 <= aspect_ratio <= 3.5:
                 geom_contrib += 10.0
 
-        # 3. Gesture feature match contribution (0 - 25 pts)
+        # 3. Gesture validity contribution (0 - 25 pts). This fixed bonus
+        # reflects a label matching one of the supported gesture definitions;
+        # it is not a classification-margin or probability estimate.
         match_contrib = 0.0
         if gesture_label in ("Open Palm", "Fist", "One Finger", "Two Fingers"):
             match_contrib = 25.0

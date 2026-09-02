@@ -7,7 +7,6 @@ import os
 import sys
 
 import cv2
-import numpy as np
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -66,17 +65,24 @@ def debug_run() -> None:
             # 2. Hand detection
             hand_res = hand_detector.process_mask(skin_res.mask_clean)
 
-            # 3. Gesture recognition & Confidence
-            hist_conf = gesture_history.get_confidence(gesture_history.last_output_gesture)
+            # 3. Extract features and classify the current contour.
             gesture_res = gesture_recognizer.process_gesture(
                 contour=hand_res.selected_contour,
                 contour_score=hand_res.score,
-                history_confidence=hist_conf,
+                history_confidence=0.0,
             )
 
-            # 4. History smoothing
-            raw_label = gesture_res.gesture if hand_res.is_hand_detected else None
+            # 4. Update temporal history before calculating confidence.
+            raw_label = gesture_res.raw_gesture if hand_res.is_hand_detected else None
             history_res = gesture_history.process_history(raw_label)
+            updated_history_confidence = gesture_history.get_confidence(raw_label)
+            gesture_res.confidence = gesture_recognizer.calculate_confidence(
+                contour=hand_res.selected_contour,
+                contour_score=hand_res.score,
+                features=gesture_res.features,
+                gesture_label=gesture_res.raw_gesture,
+                history_confidence=updated_history_confidence,
+            )
 
             # 5. Render overlay
             output = frame.copy()
@@ -151,15 +157,6 @@ def debug_run() -> None:
                 )
                 text_y += 25
 
-                cv2.putText(
-                    output,
-                    f"Gesture: {history_res.smoothed_gesture or gesture_res.gesture} | Confidence: {gesture_res.confidence:.0f}%",
-                    (10, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
-                    (0, 255, 0),
-                    2,
-                )
                 output = hand_detector.draw_both(output, hand_res.selected_contour)
             else:
                 cv2.putText(
@@ -171,6 +168,38 @@ def debug_run() -> None:
                     (0, 0, 255),
                     2,
                 )
+
+            features = gesture_res.features or {}
+            raw_text = gesture_res.raw_gesture or "None"
+            stable_text = history_res.smoothed_gesture or "None"
+            history_text = ", ".join("None" if item is None else item for item in history_res.history)
+            consensus_label = history_res.smoothed_gesture or gesture_res.raw_gesture
+            consensus_count = (
+                sum(item == consensus_label for item in history_res.history)
+                if consensus_label is not None
+                else 0
+            )
+            consensus_text = f"{consensus_count}/{len(history_res.history)}"
+
+            debug_lines = [
+                f"Raw Gesture: {raw_text}",
+                f"Stable Gesture: {stable_text}",
+                f"Defects: {features.get('convexity_defects_count', 0)} | Solidity: {features.get('solidity', 0.0):.3f}",
+                f"Elongation: {features.get('elongation', 0.0):.3f} | Extent: {features.get('extent', 0.0):.3f}",
+                f"History: [{history_text}] | Consensus: {consensus_text}",
+                f"Confidence: {gesture_res.confidence:.1f}% | Temporal: {updated_history_confidence:.2f}",
+            ]
+            for line in debug_lines:
+                cv2.putText(
+                    output,
+                    line,
+                    (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    1,
+                )
+                text_y += 22
 
             # Draw ROI overlay for calibration reference
             roi_frame = frame.copy()

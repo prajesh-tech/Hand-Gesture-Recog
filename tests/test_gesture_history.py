@@ -34,6 +34,18 @@ class TestGestureHistory:
         history.add_frame("Open Palm")
         assert len(history.get_history()) == 2
 
+    def test_unknown_frames_do_not_compete_with_valid_gesture(self):
+        history = GestureHistory(buffer_size=5, consensus_threshold=3)
+
+        history.process_history("Fist")
+        history.process_history("Unknown")
+        history.process_history("Fist")
+        result = history.process_history("Fist")
+
+        assert result.smoothed_gesture == "Fist"
+        assert result.history == ["Fist", None, "Fist", "Fist"]
+        assert result.temporal_confidence == 0.75
+
     def test_buffer_size_limit(self, history):
         """Test that buffer respects size limit."""
         for i in range(15):
@@ -132,6 +144,7 @@ class TestGestureHistory:
 
         assert len(history.get_history()) == 0
         assert history.last_output_gesture is None
+        assert history.last_consensus_gesture is None
 
     def test_set_parameters(self, history):
         """Test updating parameters."""

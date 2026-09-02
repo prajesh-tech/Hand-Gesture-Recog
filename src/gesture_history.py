@@ -12,7 +12,8 @@ from src.results import GestureHistoryResult
 class GestureHistory:
     """
     Track gesture predictions over time and output smoothed/stable gesture.
-    Uses consensus voting: only output gesture when multiple consecutive frames agree.
+    Uses sliding-window consensus voting: only output a gesture when enough
+    frames in the current window agree.
     """
 
     GESTURE_ACTIONS: ClassVar[Dict[str, str]] = {
@@ -33,7 +34,16 @@ class GestureHistory:
         self.buffer_size = buffer_size
         self.consensus_threshold = min(consensus_threshold, buffer_size)
         self.history = deque(maxlen=buffer_size)
-        self.last_output_gesture = None
+        self.last_consensus_gesture = None
+
+    @property
+    def last_output_gesture(self) -> Optional[str]:
+        """Backward-compatible name for the most recent consensus gesture."""
+        return self.last_consensus_gesture
+
+    @last_output_gesture.setter
+    def last_output_gesture(self, gesture: Optional[str]) -> None:
+        self.last_consensus_gesture = gesture
 
     def add_frame(self, gesture_label: Optional[str]) -> None:
         """
@@ -42,7 +52,8 @@ class GestureHistory:
         Args:
             gesture_label: Predicted gesture ("Fist", "Open Palm", "One Finger", "Two Fingers", None)
         """
-        self.history.append(gesture_label)
+        # Unknown is an ambiguous frame, not a competing gesture vote.
+        self.history.append(None if gesture_label == "Unknown" else gesture_label)
 
     def get_smoothed_gesture(self) -> Optional[str]:
         """
@@ -50,7 +61,8 @@ class GestureHistory:
 
         Returns:
             Gesture label if consensus reached, None otherwise.
-            Maintains last known gesture while waiting for consensus on new gesture.
+            Returns None until the current history reaches consensus. There is no
+            sticky output while waiting for a new consensus.
         """
         if not self.history:
             return None
@@ -64,19 +76,19 @@ class GestureHistory:
         # Find if any gesture has reached consensus threshold
         for gesture, count in gesture_counts.items():
             if count >= self.consensus_threshold:
-                self.last_output_gesture = gesture
+                self.last_consensus_gesture = gesture
                 return gesture
 
         # No consensus yet - if we have a "No Hand" (None) consensus, return None
         none_count = sum(1 for g in self.history if g is None)
         if none_count >= self.consensus_threshold:
-            self.last_output_gesture = None
+            self.last_consensus_gesture = None
             return None
 
         return None
 
     def process_history(self, gesture_label: Optional[str]) -> GestureHistoryResult:
-        """Add frame gesture and return detailed GestureHistoryResult."""
+        """Add a raw frame result and return the current strict-debounce state."""
         self.add_frame(gesture_label)
         smoothed = self.get_smoothed_gesture()
         action = self.GESTURE_ACTIONS.get(smoothed, "") if smoothed else ""
@@ -112,7 +124,7 @@ class GestureHistory:
     def reset(self) -> None:
         """Clear history (e.g., when hand is lost)."""
         self.history.clear()
-        self.last_output_gesture = None
+        self.last_consensus_gesture = None
 
     def set_parameters(
         self, buffer_size: Optional[int] = None, consensus_threshold: Optional[int] = None
