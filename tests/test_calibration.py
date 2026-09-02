@@ -1,17 +1,17 @@
 """
-Tests for HSV calibration validation, hue wrap-around, and persistence.
+Tests for HSV calibration validation, hue wrap-around, persistence, and recalibration safety.
 """
 
 import json
 import os
 import sys
-
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.calibration import CalibrationManager
 from src.skin_detection import SkinDetector
+from src.results import CalibrationResult
 
 
 def test_save_and_load_valid_normal_calibration(tmp_path, monkeypatch):
@@ -55,6 +55,9 @@ def test_load_corrupt_calibration_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(CalibrationManager, "CALIBRATION_FILE", str(path))
 
     assert CalibrationManager.load_calibration() is None
+    res = CalibrationManager.load_calibration_result()
+    assert res.success is False
+    assert res.status == "FAILED"
 
 
 def test_rejects_out_of_range_values(tmp_path, monkeypatch):
@@ -94,3 +97,19 @@ def test_rejects_excessively_broad_hue_range():
     broad_wrap_lower = np.array([60, 30, 40], dtype=np.uint8)
     broad_wrap_upper = np.array([50, 200, 220], dtype=np.uint8)
     assert SkinDetector.is_valid_hsv_range(broad_wrap_lower, broad_wrap_upper) is False
+
+
+def test_calibration_file_path_is_relative_to_project():
+    """Test that CalibrationManager resolves path relative to project root, independent of CWD."""
+    path = CalibrationManager.get_calibration_path()
+    assert "config" in path
+    assert "hsv_calibration.json" in path
+    assert os.path.isabs(path)
+
+
+def test_calibrate_from_samples_insufficient_pixels():
+    """Test calibration failure when sample frames have fewer than 50 valid pixels."""
+    black_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    lower, upper, stats = SkinDetector.calibrate_from_samples([black_frame])
+    assert stats["calibration_valid"] is False
+    assert "Insufficient valid skin pixels" in stats["error"]
