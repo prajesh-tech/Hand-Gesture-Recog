@@ -146,7 +146,9 @@ class HandDetector:
                     if defects is not None:
                         for d in defects.reshape(-1, 4):
                             depth = d[3] / 256.0
-                            if depth >= 10.0:
+                            # Align with GestureRecognizer.THRESHOLDS["min_defect_depth"] = 12.0
+                            # so both modules count defects on the same data consistently.
+                            if depth >= 12.0:
                                 defect_count += 1
             except cv2.error:
                 defect_count = 0

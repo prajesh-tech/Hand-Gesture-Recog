@@ -6,6 +6,7 @@ Handles camera initialization, frame capture, resize validation, and graceful er
 import time
 from typing import Optional, Tuple
 import cv2
+import numpy as np
 
 
 class CameraCapture:
@@ -82,7 +83,7 @@ class CameraCapture:
                 raise
             raise RuntimeError(f"Camera initialization failed: {e!s}") from e
 
-    def get_frame(self) -> Tuple[bool, Optional[any]]:
+    def get_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
         Capture next frame from camera.
 

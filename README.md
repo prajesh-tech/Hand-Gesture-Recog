@@ -21,7 +21,7 @@ This application captures video from a webcam, isolates the user's hand using us
 - ✅ **Real-time FPS & diagnostic overlay** in `main_debug.py`.
 - ✅ **Type-safe result structures** (`results.py`).
 - ✅ **Pure HSV V1 focus**: Purged unused Gaussian/Mahalanobis statistical skin models.
-- ✅ **Compact, reproducible test suite**: 67 automated tests passing in virtual environment.
+- ✅ **Compact, reproducible test suite**: 69 automated tests passing in virtual environment.
 
 ---
 
@@ -30,7 +30,7 @@ This application captures video from a webcam, isolates the user's hand using us
 | Component | Technology |
 |-----------|-----------|
 | Language | Python 3.7+ |
-| Computer Vision | OpenCV (`opencv-python-headless` / `opencv-python`) |
+| Computer Vision | OpenCV (`opencv-python` >= 4.8.0) |
 | Numerical Computing | NumPy |
 | Testing | pytest |
 | Color Space | HSV (Hue: 0–180, Saturation: 0–255, Value: 0–255) |
@@ -113,12 +113,14 @@ pip install -r requirements.txt
 
 ## 🖐️ Supported Gestures & Action Mapping
 
-| Gesture | Action | Features / Classification Rules |
-|---------|--------|----------------------------------|
-| **Fist** | `STOP` | High solidity ($\ge 0.88$), high extent ($\ge 0.60$), 0 convexity defects |
-| **Open Palm** | `START` | Deep convexity defects ($\ge 3$), lower solidity ($\le 0.88$) |
-| **One Finger** | `SELECT` | Elongated contour ($\text{elongation} \ge 2.0$), $\le 1$ defect |
-| **Two Fingers** | `NEXT` | Moderately elongated ($\text{elongation} \ge 1.25$), $1 \text{--} 2$ defects |
+Gestures are evaluated in priority order (most constrained to least constrained) to prevent noise defects from causing misclassification:
+
+| Priority | Gesture | Action | Features / Classification Rules |
+|:---:|---------|--------|----------------------------------|
+| 1 | **Fist** | `STOP` | High solidity ($\ge 0.88$), high extent ($\ge 0.60$), elongation $\le 1.45$, 0 convexity defects |
+| 2 | **One Finger** | `SELECT` | Elongated contour ($\text{elongation} \ge 2.0$), $\le 1$ defect |
+| 3 | **Two Fingers** | `NEXT` | Moderately elongated ($\text{elongation} \ge 1.25$), $1 \text{--} 2$ defects |
+| 4 | **Open Palm** | `START` | Convexity defects $\ge 3$, solidity $\le 0.88$, non-elongated ($\text{elongation} \le 1.74$) |
 
 Example output:
 ```text
@@ -175,9 +177,9 @@ Run the complete test suite inside the project virtual environment:
 ./venv/bin/pytest -v
 ```
 
-All 67 tests pass with 0 failures, 0 errors, and 0 warnings:
+All 69 tests pass with 0 failures, 0 errors, and 0 warnings:
 ```text
-67 passed in 1.18s
+69 passed in 0.80s
 ```
 
 Path independence test:

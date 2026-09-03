@@ -5,7 +5,7 @@ Orchestrates camera, preprocessing, skin detection, hand detection, gesture reco
 
 import os
 import sys
-from typing import ClassVar, Optional
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -25,13 +25,7 @@ from src.skin_detection import SkinDetector
 class HandGestureApp:
     """Main application class orchestrating all components."""
 
-    GESTURE_ACTIONS: ClassVar[dict[str, str]] = {
-        "Fist": "STOP",
-        "Open Palm": "START",
-        "One Finger": "SELECT",
-        "Two Fingers": "NEXT",
-    }
-
+    
     def __init__(
         self,
         camera_id: int = 0,
@@ -177,10 +171,10 @@ class HandGestureApp:
             key = cv2.waitKey(30) & 0xFF
 
             if key == ord(" "):
-                cy, cx = h // 2, w // 2
-                region_size = 60
-                y1, y2 = max(0, cy - region_size), min(h, cy + region_size)
-                x1, x2 = max(0, cx - region_size), min(w, cx + region_size)
+                # Sample region matches the displayed green rectangle exactly:
+                # same corners as the cv2.rectangle drawn at (w//4, h//4)→(3*w//4, 3*h//4).
+                x1, y1 = w // 4, h // 4
+                x2, y2 = 3 * w // 4, 3 * h // 4
 
                 inset = 15
                 sample_region = frame[y1 + inset : y2 - inset, x1 + inset : x2 - inset]

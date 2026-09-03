@@ -87,20 +87,24 @@ class GestureRecognizer:
         return None if features is None else self._classify_by_features(features)
 
     def _classify_by_features(self, features: Dict[str, Any]) -> str:
-        """Classify a valid feature set in distinctive-to-compact order."""
+        """Classify a valid feature set: compact/specific gestures first, open palm last.
+
+        Evaluation order (most-constrained to least-constrained):
+        1. Fist        — zero defects + high solidity/extent, compact shape
+        2. One Finger  — ≤1 defect + strong elongation (narrow pointing shape)
+        3. Two Fingers — 1-2 defects + moderate elongation (forked, elongated shape)
+        4. Open Palm   — 3+ defects + low solidity + non-elongated (spread hand)
+        5. Unknown     — anything else
+
+        Open Palm is checked *last* among the named gestures so that elongated
+        finger gestures with noisy extra defects cannot fall into it.
+        """
         defects = features["convexity_defects_count"]
         solidity = features["solidity"]
         extent = features["extent"]
         elongation = features["elongation"]
-        if defects >= self.thresholds["palm_defects_min"] and solidity <= self.thresholds["palm_solidity_max"]:
-            return "Open Palm"
-        if (
-            self.thresholds["two_fingers_defects_min"] <= defects <= self.thresholds["two_fingers_defects_max"]
-            and elongation >= self.thresholds["two_fingers_elongation_min"]
-        ):
-            return "Two Fingers"
-        if defects <= self.thresholds["one_finger_defects_max"] and elongation >= self.thresholds["one_finger_elongation_min"]:
-            return "One Finger"
+
+        # 1. Fist — most compact, zero convexity defects
         if (
             defects == 0
             and solidity >= self.thresholds["fist_solidity_min"]
@@ -108,6 +112,27 @@ class GestureRecognizer:
             and elongation <= self.thresholds["fist_elongation_max"]
         ):
             return "Fist"
+
+        # 2. One Finger — strongly elongated, at most 1 defect
+        if defects <= self.thresholds["one_finger_defects_max"] and elongation >= self.thresholds["one_finger_elongation_min"]:
+            return "One Finger"
+
+        # 3. Two Fingers — moderately elongated fork, 1–2 defects
+        if (
+            self.thresholds["two_fingers_defects_min"] <= defects <= self.thresholds["two_fingers_defects_max"]
+            and elongation >= self.thresholds["two_fingers_elongation_min"]
+        ):
+            return "Two Fingers"
+
+        # 4. Open Palm — many defects, low solidity, and NOT highly elongated
+        #    (elongation < fist_elongation_max * 1.2 keeps elongated finger shapes out)
+        if (
+            defects >= self.thresholds["palm_defects_min"]
+            and solidity <= self.thresholds["palm_solidity_max"]
+            and elongation <= self.thresholds["fist_elongation_max"] * 1.2
+        ):
+            return "Open Palm"
+
         return "Unknown"
 
     def calculate_confidence(

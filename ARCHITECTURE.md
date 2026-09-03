@@ -47,11 +47,11 @@ graph TD
 
 ### 5. `GestureRecognizer` (`src/gesture_recognition.py`)
 - Extracts geometric features: Area, Solidity, Extent, Aspect Ratio, Elongation, Convexity Defects.
-- Classifies gestures according to threshold rules:
-  - **Open Palm**: Defects $\ge 3$, Solidity $\le 0.88$
+- Classifies gestures according to threshold rules (most-constrained to least-constrained):
   - **Fist**: Defects $= 0$, Solidity $\ge 0.88$, Extent $\ge 0.60$, Elongation $\le 1.45$
   - **One Finger**: Defects $\le 1$, Elongation $\ge 2.0$
   - **Two Fingers**: $1 \le \text{Defects} \le 2$, Elongation $\ge 1.25$
+  - **Open Palm**: Defects $\ge 3$, Solidity $\le 0.88$, Elongation $\le 1.74$ (checked last)
 - Evaluates **0–100% Heuristic Detection Confidence**.
 
 ### 6. `GestureHistory` (`src/gesture_history.py`)

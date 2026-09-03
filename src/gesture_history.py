@@ -73,8 +73,10 @@ class GestureHistory:
             if gesture is not None:
                 gesture_counts[gesture] = gesture_counts.get(gesture, 0) + 1
 
-        # Find if any gesture has reached consensus threshold
-        for gesture, count in gesture_counts.items():
+        # Find if any gesture has reached consensus threshold.
+        # Sort by count descending so the most-agreed-on gesture wins when
+        # multiple gestures exceed the threshold simultaneously.
+        for gesture, count in sorted(gesture_counts.items(), key=lambda x: x[1], reverse=True):
             if count >= self.consensus_threshold:
                 self.last_consensus_gesture = gesture
                 return gesture
