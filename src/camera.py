@@ -12,6 +12,11 @@ import numpy as np
 class CameraCapture:
     """Wrapper for OpenCV VideoCapture with error handling, resize factor validation, and FPS tracking."""
 
+    # BlazePalm anchor grid is trained at 256×256; anything above 1280×720 causes
+    # detection failures.  VGA (640×480) is the reliable sweet-spot.
+    BLAZEPALM_SAFE_WIDTH: int = 640
+    BLAZEPALM_SAFE_HEIGHT: int = 480
+
     def __init__(
         self,
         camera_id: int = 0,
@@ -21,11 +26,21 @@ class CameraCapture:
         resize_factor: float = 1.0,
         mirror: bool = True,
         auto_contrast: bool = False,
+        force_vga: bool = True,
     ):
+        """
+        Args:
+            force_vga: When True (default), any frame delivered at a resolution
+                       higher than 640×480 is automatically downscaled to VGA
+                       before being returned.  This prevents BlazePalm anchor
+                       grid mismatches on 1080p / 4K webcams.
+        """
         if not isinstance(mirror, bool):
             raise TypeError(f"mirror must be a boolean, got {type(mirror).__name__}")
         if not isinstance(auto_contrast, bool):
             raise TypeError(f"auto_contrast must be a boolean, got {type(auto_contrast).__name__}")
+        if not isinstance(force_vga, bool):
+            raise TypeError(f"force_vga must be a boolean, got {type(force_vga).__name__}")
 
         self.cap = None
         self.camera_id = camera_id
@@ -34,6 +49,7 @@ class CameraCapture:
         self.target_fps = target_fps
         self.mirror = mirror
         self.auto_contrast = auto_contrast
+        self.force_vga = force_vga
 
         self.resize_factor = self._validate_resize_factor(resize_factor)
 
@@ -88,15 +104,27 @@ class CameraCapture:
                     f"Failed to open camera (ID: {self.camera_id}). Check camera connection."
                 )
 
-            # Set camera properties
+            # RC1 FIX: Request VGA at driver level first to avoid high-res anchor mismatch.
+            # Many drivers honour CAP_PROP_FRAME_WIDTH/HEIGHT only if set *before* the first
+            # frame is read, so we set them immediately after open.
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
             self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-            # Read actual properties
+            # Read what the driver actually negotiated
             self.actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.target_width
             self.actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.target_height
             self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS) or float(self.target_fps)
+
+            # Warn if driver ignored the VGA request (e.g. 1080p / 4K webcams)
+            if self.actual_width > self.BLAZEPALM_SAFE_WIDTH or self.actual_height > self.BLAZEPALM_SAFE_HEIGHT:
+                print(
+                    f"[CameraCapture WARNING] Driver negotiated {self.actual_width}×{self.actual_height} "
+                    f"(requested {self.target_width}×{self.target_height}). "
+                    f"BlazePalm anchor mismatch risk at resolutions above "
+                    f"{self.BLAZEPALM_SAFE_WIDTH}×{self.BLAZEPALM_SAFE_HEIGHT}. "
+                    f"{'force_vga=True will downscale each frame automatically.' if self.force_vga else 'Pass force_vga=True to auto-downscale.'}"
+                )
 
         except Exception as e:
             self.release()
@@ -122,8 +150,31 @@ class CameraCapture:
             if not ret or frame is None:
                 return False, None
 
-            # Apply resizing if needed
-            if self.resize_factor < 1.0:
+            # RC2 FIX: Strip alpha channel — some webcam drivers deliver BGRA (4 channels).
+            # MediaPipe C++ bindings require exactly 3-channel BGR; passing 4 channels causes
+            # silent detection failure (Landmarks=00 on every frame).
+            if frame.ndim == 3 and frame.shape[2] == 4:
+                frame = frame[:, :, :3]
+
+            # Guarantee C-contiguous memory immediately after capture (before any transforms)
+            if not frame.flags.c_contiguous:
+                frame = np.ascontiguousarray(frame)
+
+            # RC1 FIX: Downscale to VGA when driver returned a higher resolution.
+            # BlazePalm's anchor grid is calibrated for ≤640×480 inputs; 1080p / 4K
+            # frames push hand bounding boxes outside the trained anchor positions.
+            if self.force_vga and (
+                frame.shape[1] > self.BLAZEPALM_SAFE_WIDTH
+                or frame.shape[0] > self.BLAZEPALM_SAFE_HEIGHT
+            ):
+                frame = cv2.resize(
+                    frame,
+                    (self.BLAZEPALM_SAFE_WIDTH, self.BLAZEPALM_SAFE_HEIGHT),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+
+            # Apply additional resize_factor on top of the VGA base
+            elif self.resize_factor < 1.0:
                 new_width = int(frame.shape[1] * self.resize_factor)
                 new_height = int(frame.shape[0] * self.resize_factor)
                 frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)

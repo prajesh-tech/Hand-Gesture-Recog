@@ -186,3 +186,35 @@ class TestMediaPipeDetector:
         with pytest.raises(ValueError):
             MediaPipeDetector.enhance_contrast(np.zeros((100, 100), dtype=np.uint8))
 
+    def test_wrist_boundary_warning_emitted_when_near_edge(self, capsys):
+        """RC3: process_frame must emit a console warning when wrist (LM0) is within 10% of any frame edge."""
+        detector = MediaPipeDetector()
+        try:
+            # Construct 21 mock landmarks with wrist at x=0.02 — within the 10% edge margin
+            mock_landmarks = []
+            for i in range(21):
+                mock_lm = MagicMock()
+                mock_lm.x = 0.02 if i == 0 else (0.5 + i * 0.01)  # wrist very close to left edge
+                mock_lm.y = 0.5
+                mock_lm.z = -0.05
+                mock_landmarks.append(mock_lm)
+
+            mock_hand = MagicMock()
+            mock_hand.landmark = mock_landmarks
+            mock_result = MagicMock()
+            mock_result.multi_hand_landmarks = [mock_hand]
+
+            with patch.object(detector.hands, "process", return_value=mock_result), \
+                 patch.object(detector.mp_drawing, "draw_landmarks"):
+                test_frame = np.full((480, 640, 3), 128, dtype=np.uint8)
+                landmarks, _ = detector.process_frame(test_frame)
+
+            assert landmarks is not None
+            assert landmarks[0]["x"] == pytest.approx(0.02)
+
+            captured = capsys.readouterr()
+            assert "Wrist (LM0) near frame edge" in captured.out, (
+                "Expected boundary proximity warning in stdout when wrist is within 10% of edge"
+            )
+        finally:
+            detector.close()

@@ -70,7 +70,7 @@ class TestCameraCapture:
         mock_cap.read.return_value = (True, fake_frame)
         mock_videocapture.return_value = mock_cap
 
-        camera = CameraCapture(camera_id=0, target_width=1280, target_height=720, resize_factor=0.5)
+        camera = CameraCapture(camera_id=0, target_width=1280, target_height=720, resize_factor=0.5, force_vga=False)
 
         assert camera.get_frame_dimensions() == (640, 360)
 
@@ -174,3 +174,63 @@ class TestCameraCapture:
         with pytest.raises(TypeError):
             CameraCapture(auto_contrast="yes")
 
+    @patch("cv2.VideoCapture")
+    def test_force_vga_downscales_high_resolution_frames(self, mock_videocapture):
+        """RC1: force_vga=True must downscale 1080p frames to 640x480 to prevent BlazePalm anchor mismatch."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        # Driver reports it negotiated 1080p despite our 640x480 request
+        mock_cap.get.side_effect = lambda prop: {3: 1920.0, 4: 1080.0, 5: 30.0}.get(prop, 0.0)
+        hd_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        mock_cap.read.return_value = (True, hd_frame)
+        mock_videocapture.return_value = mock_cap
+
+        camera = CameraCapture(camera_id=0, force_vga=True)
+        ret, frame = camera.get_frame()
+        assert ret is True
+        # Frame must be downscaled to VGA safe dimensions
+        assert frame.shape == (480, 640, 3)
+        assert frame.flags.c_contiguous
+
+    @patch("cv2.VideoCapture")
+    def test_force_vga_false_preserves_high_resolution(self, mock_videocapture):
+        """RC1: force_vga=False must leave high-resolution frames at their native size."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {3: 1920.0, 4: 1080.0, 5: 30.0}.get(prop, 0.0)
+        hd_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        mock_cap.read.return_value = (True, hd_frame)
+        mock_videocapture.return_value = mock_cap
+
+        camera = CameraCapture(camera_id=0, force_vga=False)
+        ret, frame = camera.get_frame()
+        assert ret is True
+        assert frame.shape[0] == 1080  # native height preserved
+        assert frame.shape[1] == 1920  # native width preserved
+
+    @patch("cv2.VideoCapture")
+    def test_bgra_alpha_strip(self, mock_videocapture):
+        """RC2: BGRA (4-channel) frames from webcam drivers must be stripped to 3-channel BGR."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {3: 640.0, 4: 480.0, 5: 30.0}.get(prop, 0.0)
+        # Simulate a 4-channel BGRA frame (common on Linux UVC webcams)
+        bgra_frame = np.full((480, 640, 4), 200, dtype=np.uint8)
+        bgra_frame[:, :, 3] = 255  # alpha = fully opaque
+        mock_cap.read.return_value = (True, bgra_frame)
+        mock_videocapture.return_value = mock_cap
+
+        camera = CameraCapture(camera_id=0, force_vga=False)
+        ret, frame = camera.get_frame()
+        assert ret is True
+        assert frame.shape[2] == 3, "Alpha channel must be stripped before returning frame"
+        assert frame.flags.c_contiguous
+
+    @patch("cv2.VideoCapture")
+    def test_force_vga_invalid_type_raises_type_error(self, mock_videocapture):
+        """RC1: Non-boolean force_vga must raise TypeError."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_videocapture.return_value = mock_cap
+        with pytest.raises(TypeError, match="force_vga must be a boolean"):
+            CameraCapture(force_vga=1)

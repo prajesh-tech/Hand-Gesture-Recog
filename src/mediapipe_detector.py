@@ -253,6 +253,26 @@ class MediaPipeDetector:
                 "z": float(lm.z),
             })
 
+        # RC3 DIAGNOSTIC: Check wrist (Landmark 0) boundary proximity.
+        # MediaPipe requires both the wrist joint and palm base to construct the
+        # hand bounding box.  If the wrist is near the frame edge the bounding box
+        # will be partially outside the image, which causes detection loss on the
+        # very next frame.  Emit a console warning so the user knows to reposition.
+        EDGE_MARGIN: float = 0.10  # 10 % of normalised frame width/height
+        wrist = landmarks[0]
+        wrist_near_edge = (
+            wrist["x"] < EDGE_MARGIN
+            or wrist["x"] > (1.0 - EDGE_MARGIN)
+            or wrist["y"] < EDGE_MARGIN
+            or wrist["y"] > (1.0 - EDGE_MARGIN)
+        )
+        if wrist_near_edge:
+            print(
+                f"[MediaPipeDetector WARNING] Wrist (LM0) near frame edge "
+                f"(x={wrist['x']:.2f}, y={wrist['y']:.2f}). "
+                "Move hand toward the centre of the camera frame to avoid bounding-box loss."
+            )
+
         return landmarks, annotated_frame
 
     def process_frame_to_result(self, frame: np.ndarray) -> LandmarkDetectionResult:
