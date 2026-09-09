@@ -19,12 +19,21 @@ class CameraCapture:
         target_height: int = 480,
         target_fps: int = 30,
         resize_factor: float = 1.0,
+        mirror: bool = True,
+        auto_contrast: bool = False,
     ):
+        if not isinstance(mirror, bool):
+            raise TypeError(f"mirror must be a boolean, got {type(mirror).__name__}")
+        if not isinstance(auto_contrast, bool):
+            raise TypeError(f"auto_contrast must be a boolean, got {type(auto_contrast).__name__}")
+
         self.cap = None
         self.camera_id = camera_id
         self.target_width = target_width
         self.target_height = target_height
         self.target_fps = target_fps
+        self.mirror = mirror
+        self.auto_contrast = auto_contrast
 
         self.resize_factor = self._validate_resize_factor(resize_factor)
 
@@ -55,6 +64,18 @@ class CameraCapture:
     def set_resize_factor(self, factor: float) -> None:
         """Update frame resize factor."""
         self.resize_factor = self._validate_resize_factor(factor)
+
+    def set_mirror(self, mirror: bool) -> None:
+        """Update mirror flip setting."""
+        if not isinstance(mirror, bool):
+            raise TypeError(f"mirror must be a boolean, got {type(mirror).__name__}")
+        self.mirror = mirror
+
+    def set_auto_contrast(self, auto_contrast: bool) -> None:
+        """Update auto contrast enhancement setting."""
+        if not isinstance(auto_contrast, bool):
+            raise TypeError(f"auto_contrast must be a boolean, got {type(auto_contrast).__name__}")
+        self.auto_contrast = auto_contrast
 
     def _initialize_camera(self) -> None:
         """Initialize camera device and set properties. Releases capture object on failure."""
@@ -106,6 +127,23 @@ class CameraCapture:
                 new_width = int(frame.shape[1] * self.resize_factor)
                 new_height = int(frame.shape[0] * self.resize_factor)
                 frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+
+            # Apply horizontal mirroring if enabled
+            if self.mirror:
+                frame = cv2.flip(frame, 1)
+
+            # Ensure memory continuity after flip or resize operations
+            if not frame.flags.c_contiguous:
+                frame = np.ascontiguousarray(frame)
+
+            # Apply CLAHE contrast enhancement if enabled (for low-light or backlighting)
+            if self.auto_contrast:
+                lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                l_chan, a_chan, b_chan = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                l_clahe = clahe.apply(l_chan)
+                merged = cv2.merge((l_clahe, a_chan, b_chan))
+                frame = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
             # Update FPS counter
             self.frame_count += 1

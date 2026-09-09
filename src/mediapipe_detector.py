@@ -47,8 +47,8 @@ if not hasattr(mp.solutions, "hands"):
             self,
             static_image_mode: bool = False,
             max_num_hands: int = 1,
-            min_detection_confidence: float = 0.7,
-            min_tracking_confidence: float = 0.7,
+            min_detection_confidence: float = 0.5,
+            min_tracking_confidence: float = 0.5,
         ) -> None:
             self.static_image_mode = static_image_mode
             self.max_num_hands = max_num_hands
@@ -107,8 +107,8 @@ class MediaPipeDetector:
 
     def __init__(
         self,
-        min_detection_confidence: float = 0.7,
-        min_tracking_confidence: float = 0.7,
+        min_detection_confidence: float = 0.5,
+        min_tracking_confidence: float = 0.5,
         max_num_hands: int = 1,
         static_image_mode: bool = False,
     ) -> None:
@@ -116,8 +116,8 @@ class MediaPipeDetector:
         Initialize MediaPipe Hands pipeline.
 
         Args:
-            min_detection_confidence: Minimum confidence for hand detection.
-            min_tracking_confidence: Minimum confidence for landmark tracking.
+            min_detection_confidence: Minimum confidence for hand detection (default calibrated to 0.5).
+            min_tracking_confidence: Minimum confidence for landmark tracking (default calibrated to 0.5).
             max_num_hands: Maximum number of hands to track (default 1).
             static_image_mode: Whether to treat images as static (False for video streams).
         """
@@ -157,6 +157,38 @@ class MediaPipeDetector:
             raise ValueError(f"Frame must be a non-empty 3-channel image, got shape {frame.shape}")
         if frame.shape[2] != 3:
             raise ValueError(f"Frame must have exactly 3 color channels, got {frame.shape[2]}")
+        if frame.dtype != np.uint8:
+            raise TypeError(f"Frame dtype must be uint8, got {frame.dtype}")
+
+    @staticmethod
+    def enhance_contrast(
+        frame: np.ndarray,
+        clip_limit: float = 2.0,
+        tile_grid_size: Tuple[int, int] = (8, 8),
+    ) -> np.ndarray:
+        """
+        Enhance image contrast using CLAHE on the luminance (L) channel in LAB color space.
+        Normalizes lighting across backlit, shadowed, or low-light scenes without color distortion.
+
+        Args:
+            frame: Input BGR image (H, W, 3) uint8.
+            clip_limit: Threshold for contrast limiting.
+            tile_grid_size: Size of grid for histogram equalization.
+
+        Returns:
+            Contrast-enhanced BGR image with identical dimensions and dtype.
+        """
+        if frame is None or not isinstance(frame, np.ndarray):
+            raise TypeError("Frame must be a numpy.ndarray")
+        if frame.size == 0 or frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError(f"Frame must be a non-empty 3-channel image, got shape {frame.shape if hasattr(frame, 'shape') else 'invalid'}")
+
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l_chan, a_chan, b_chan = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+        l_clahe = clahe.apply(l_chan)
+        merged_lab = cv2.merge((l_clahe, a_chan, b_chan))
+        return cv2.cvtColor(merged_lab, cv2.COLOR_LAB2BGR)
 
     def process_frame(
         self, frame: np.ndarray
@@ -178,8 +210,15 @@ class MediaPipeDetector:
 
         # Convert BGR to RGB for MediaPipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Ensure memory continuity (critical for flipped, cropped, or strided arrays)
+        if not rgb_frame.flags.c_contiguous:
+            rgb_frame = np.ascontiguousarray(rgb_frame)
+
         rgb_frame.flags.writeable = False
-        results = self.hands.process(rgb_frame)
+        try:
+            results = self.hands.process(rgb_frame)
+        finally:
+            rgb_frame.flags.writeable = True
 
         if not results or not results.multi_hand_landmarks:
             return None, annotated_frame

@@ -118,3 +118,59 @@ class TestCameraCapture:
 
         assert camera.is_open() is False
         mock_cap.release.assert_called_once()
+
+    @patch("cv2.VideoCapture")
+    def test_mirror_setting_and_continuity(self, mock_videocapture):
+        """Test mirror flipping flag and memory continuity preservation."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {3: 640.0, 4: 480.0, 5: 30.0}.get(prop, 0.0)
+        # Non-symmetric gradient pattern to test mirror flip
+        frame_pattern = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame_pattern[:, :320] = 255  # Left half white
+        mock_cap.read.return_value = (True, frame_pattern.copy())
+        mock_videocapture.return_value = mock_cap
+
+        # Default mirror is True
+        camera = CameraCapture(camera_id=0, mirror=True)
+        ret, frame = camera.get_frame()
+        assert ret is True
+        assert frame.flags.c_contiguous
+        # When mirrored, right half should now be white
+        assert np.all(frame[:, 320:] == 255)
+
+        # Toggle mirror off
+        camera.set_mirror(False)
+        mock_cap.read.return_value = (True, frame_pattern.copy())
+        ret, unmirrored = camera.get_frame()
+        assert ret is True
+        assert np.all(unmirrored[:, :320] == 255)
+
+        # Invalid mirror type raises TypeError
+        with pytest.raises(TypeError):
+            camera.set_mirror("invalid")
+        with pytest.raises(TypeError):
+            CameraCapture(mirror=123)
+
+    @patch("cv2.VideoCapture")
+    def test_auto_contrast_setting_and_execution(self, mock_videocapture):
+        """Test auto contrast setting and execution without error."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {3: 640.0, 4: 480.0, 5: 30.0}.get(prop, 0.0)
+        fake_frame = np.full((480, 640, 3), 100, dtype=np.uint8)
+        mock_cap.read.return_value = (True, fake_frame)
+        mock_videocapture.return_value = mock_cap
+
+        camera = CameraCapture(camera_id=0, auto_contrast=True)
+        ret, frame = camera.get_frame()
+        assert ret is True
+        assert frame.shape == (480, 640, 3)
+        assert frame.flags.c_contiguous
+
+        # Invalid auto_contrast type raises TypeError
+        with pytest.raises(TypeError):
+            camera.set_auto_contrast(None)
+        with pytest.raises(TypeError):
+            CameraCapture(auto_contrast="yes")
+

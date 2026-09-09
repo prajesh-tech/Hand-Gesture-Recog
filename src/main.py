@@ -30,10 +30,13 @@ class HandGestureApp:
         frame_width: int = 640,
         frame_height: int = 480,
         resize_factor: float = 1.0,
-        min_detection_confidence: float = 0.7,
-        min_tracking_confidence: float = 0.7,
+        min_detection_confidence: float = 0.5,
+        min_tracking_confidence: float = 0.5,
         history_buffer_size: int = 8,
         consensus_threshold: int = 4,
+        mirror: bool = True,
+        auto_contrast: bool = False,
+        debug: bool = True,
     ) -> None:
         print("Hand Gesture Recognition System (MediaPipe 3D Landmark Strategy 1)")
         print("=" * 65)
@@ -41,6 +44,8 @@ class HandGestureApp:
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.resize_factor = resize_factor
+        self.debug = debug
+        self.frame_count = 0
 
         try:
             self.camera = CameraCapture(
@@ -48,6 +53,8 @@ class HandGestureApp:
                 target_width=frame_width,
                 target_height=frame_height,
                 resize_factor=resize_factor,
+                mirror=mirror,
+                auto_contrast=auto_contrast,
             )
             print("✓ Camera initialized successfully")
         except (RuntimeError, ValueError, TypeError) as e:
@@ -60,7 +67,7 @@ class HandGestureApp:
             max_num_hands=1,
             static_image_mode=False,
         )
-        print("✓ MediaPipe 3D Landmark Detector initialized")
+        print("✓ MediaPipe 3D Landmark Detector initialized (conf=0.5)")
 
         self.gesture_recognizer = LandmarkGestureRecognizer()
         print("✓ Rule-based geometric Gesture Recognizer initialized")
@@ -84,6 +91,7 @@ class HandGestureApp:
         if not ret or frame is None:
             return None
 
+        self.frame_count += 1
         fps = self.camera.get_fps()
 
         # Step 1: MediaPipe 3D Landmark Detection & Skeleton Overlay
@@ -117,6 +125,15 @@ class HandGestureApp:
             is_hand_detected=is_hand_detected,
         )
 
+        # Lightweight per-frame debug print
+        if self.debug:
+            lm_count = len(landmarks) if landmarks is not None else 0
+            print(
+                f"[DEBUG Frame {self.frame_count:04d}] HandDetected={is_hand_detected} "
+                f"| Landmarks={lm_count:02d} | Raw={raw_gesture or 'None'} "
+                f"| Conf={confidence:.0f}% | FPS={fps:.1f}"
+            )
+
         return DetectionFrameResult(
             frame=frame,
             fps=fps,
@@ -128,39 +145,63 @@ class HandGestureApp:
 
     def render_overlay(self, diag: DetectionFrameResult) -> np.ndarray:
         """Render diagnostic and action HUD on the annotated frame."""
-        output_frame = diag.annotated_frame if diag.annotated_frame is not None else diag.frame.copy()
+        output_frame = diag.annotated_frame.copy() if diag.annotated_frame is not None else diag.frame.copy()
 
         smoothed = diag.history_res.smoothed_gesture
         action = diag.history_res.action
         confidence = diag.gesture_res.confidence
         raw_gesture = diag.gesture_res.raw_gesture
+        is_detected = diag.gesture_res.is_hand_detected
 
-        y_offset = 40
-        if diag.gesture_res.is_hand_detected:
+        # Diagnostic HUD Line 1: Hand Detected True/False
+        detect_color = (0, 255, 0) if is_detected else (0, 0, 255)
+        cv2.putText(
+            output_frame,
+            f"Hand Detected: {is_detected}",
+            (20, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            detect_color,
+            2,
+        )
+
+        # Diagnostic HUD Line 2: Tracking Confidence
+        cv2.putText(
+            output_frame,
+            f"Tracking Confidence: {confidence:.0f}%",
+            (20, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 0),
+            2,
+        )
+
+        y_offset = 100
+        if is_detected:
             if smoothed:
                 # Stable recognized gesture
                 cv2.putText(
                     output_frame,
-                    f"Gesture: {smoothed} ({confidence:.0f}%)",
+                    f"Gesture: {smoothed}",
                     (20, y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9,
+                    0.85,
                     (0, 255, 0),
                     2,
                 )
                 cv2.putText(
                     output_frame,
                     f"Action: {action}",
-                    (20, y_offset + 40),
+                    (20, y_offset + 35),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9,
+                    0.85,
                     (0, 255, 255),
                     2,
                 )
             elif raw_gesture == "Unknown":
                 cv2.putText(
                     output_frame,
-                    f"Gesture: Unknown ({confidence:.0f}%)",
+                    f"Gesture: Unknown",
                     (20, y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
@@ -171,7 +212,7 @@ class HandGestureApp:
                 # Raw gesture pending temporal consensus
                 cv2.putText(
                     output_frame,
-                    f"Raw: {raw_gesture} ({confidence:.0f}%) [Stabilizing]",
+                    f"Raw: {raw_gesture} [Stabilizing]",
                     (20, y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
@@ -181,15 +222,15 @@ class HandGestureApp:
         else:
             cv2.putText(
                 output_frame,
-                f"No Hand Detected | Confidence: {confidence:.0f}%",
+                "Status: No hand in view (Position hand in camera frame)",
                 (20, y_offset),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
+                0.65,
+                (180, 180, 180),
                 2,
             )
 
-        # Render FPS
+        # Render FPS at bottom-left
         cv2.putText(
             output_frame,
             f"FPS: {diag.fps:.1f}",

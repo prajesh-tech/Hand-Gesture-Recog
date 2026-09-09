@@ -22,8 +22,8 @@ class TestMediaPipeDetector:
     def test_default_initialization(self):
         """Test default detector initialization."""
         detector = MediaPipeDetector()
-        assert detector.min_detection_confidence == 0.7
-        assert detector.min_tracking_confidence == 0.7
+        assert detector.min_detection_confidence == 0.5
+        assert detector.min_tracking_confidence == 0.5
         assert detector.max_num_hands == 1
         assert detector.static_image_mode is False
         detector.close()
@@ -76,6 +76,10 @@ class TestMediaPipeDetector:
             # 4-channel image
             with pytest.raises(ValueError, match="exactly 3 color channels"):
                 detector.validate_frame(np.zeros((100, 100, 4), dtype=np.uint8))
+
+            # Non-uint8 dtype (e.g. float32)
+            with pytest.raises(TypeError, match="Frame dtype must be uint8"):
+                detector.validate_frame(np.zeros((100, 100, 3), dtype=np.float32))
         finally:
             detector.close()
 
@@ -143,3 +147,42 @@ class TestMediaPipeDetector:
             assert detector.hands is not None
         # Verify close method can be called multiple times without error
         detector.close()
+
+    def test_process_frame_handles_non_contiguous_input(self):
+        """Test that process_frame handles non-contiguous (e.g. flipped or sliced) arrays gracefully."""
+        detector = MediaPipeDetector()
+        try:
+            # Create a non-contiguous slice/flip
+            frame = np.full((480, 640, 3), 128, dtype=np.uint8)
+            flipped_frame = np.fliplr(frame)  # Not C-contiguous
+            assert not flipped_frame.flags.c_contiguous
+
+            with patch.object(detector.hands, "process") as mock_process:
+                mock_result = MagicMock()
+                mock_result.multi_hand_landmarks = None
+                mock_process.return_value = mock_result
+
+                lms, ann = detector.process_frame(flipped_frame)
+                assert lms is None
+                assert ann.shape == flipped_frame.shape
+        finally:
+            detector.close()
+
+    def test_enhance_contrast_functionality_and_validation(self):
+        """Test CLAHE contrast enhancement utility and input validation."""
+        test_frame = np.full((100, 100, 3), 100, dtype=np.uint8)
+        enhanced = MediaPipeDetector.enhance_contrast(test_frame)
+        assert isinstance(enhanced, np.ndarray)
+        assert enhanced.shape == test_frame.shape
+        assert enhanced.dtype == np.uint8
+
+        # Input validation
+        with pytest.raises(TypeError):
+            MediaPipeDetector.enhance_contrast(None)
+        with pytest.raises(TypeError):
+            MediaPipeDetector.enhance_contrast("invalid")
+        with pytest.raises(ValueError):
+            MediaPipeDetector.enhance_contrast(np.zeros((0, 0, 3), dtype=np.uint8))
+        with pytest.raises(ValueError):
+            MediaPipeDetector.enhance_contrast(np.zeros((100, 100), dtype=np.uint8))
+
