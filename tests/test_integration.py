@@ -16,6 +16,7 @@ from src.skin_detection import SkinDetector
 from src.hand_detection import HandDetector
 from src.gesture_recognition import GestureRecognizer
 from src.gesture_history import GestureHistory
+from src.main import HandGestureApp
 
 
 class TestIntegrationSyntheticHands:
@@ -143,6 +144,49 @@ class TestIntegrationSyntheticHands:
         
         # Should reach consensus on Fist (5+ frames)
         assert smoothed == "Fist"
+
+    def test_confidence_uses_history_after_current_frame(self, setup_pipeline):
+        pipeline = setup_pipeline
+        frame = np.zeros((400, 400, 3), dtype=np.uint8)
+        cv2.circle(frame, (200, 200), 80, (100, 100, 200), -1)
+
+        pipeline["skin_detector"].set_hsv_range(
+            np.array([0, 20, 40], dtype=np.uint8),
+            np.array([180, 255, 255], dtype=np.uint8),
+        )
+        history = pipeline["gesture_history"]
+        history.add_frame("Fist")
+        history.add_frame("Open Palm")
+
+        class FakeCamera:
+            def get_frame(self):
+                return True, frame
+
+            def get_fps(self):
+                return 30.0
+
+        app = HandGestureApp.__new__(HandGestureApp)
+        app.camera = FakeCamera()
+        app.skin_detector = pipeline["skin_detector"]
+        app.hand_detector = pipeline["hand_detector"]
+        app.gesture_recognizer = pipeline["gesture_recognizer"]
+        app.gesture_history = history
+
+        result = app.process_current_frame()
+
+        assert result is not None
+        assert result.gesture_res.raw_gesture == "Fist"
+        assert result.history_res.history[-1] == "Fist"
+        assert history.get_confidence("Fist") == pytest.approx(2 / 3)
+
+        expected = app.gesture_recognizer.calculate_confidence(
+            result.hand_res.selected_contour,
+            result.hand_res.score,
+            result.gesture_res.features,
+            result.gesture_res.raw_gesture,
+            history_confidence=2 / 3,
+        )
+        assert result.gesture_res.confidence == expected
     
     def test_gesture_classification_consistency(self, setup_pipeline):
         """Test that same shape produces consistent gesture across runs."""

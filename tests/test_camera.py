@@ -32,14 +32,16 @@ class TestCameraCapture:
         mock_videocapture.assert_called_once_with(0)
 
     @patch("cv2.VideoCapture")
-    def test_failed_initialization_raises_runtime_error(self, mock_videocapture):
-        """Test that failed camera initialization raises RuntimeError."""
+    def test_failed_initialization_releases_camera_and_raises(self, mock_videocapture):
+        """Test that failed camera initialization releases capture resource before raising RuntimeError."""
         mock_cap = MagicMock()
         mock_cap.isOpened.return_value = False
         mock_videocapture.return_value = mock_cap
 
         with pytest.raises(RuntimeError, match="Failed to open camera"):
             CameraCapture(camera_id=99)
+
+        mock_cap.release.assert_called()
 
     @patch("cv2.VideoCapture")
     def test_frame_acquisition(self, mock_videocapture):
@@ -75,6 +77,33 @@ class TestCameraCapture:
         success, frame = camera.get_frame()
         assert success is True
         assert frame.shape == (360, 640, 3)  # height=360, width=640
+
+    @patch("cv2.VideoCapture")
+    def test_invalid_resize_factors(self, mock_videocapture):
+        """Test rejection of 0, negative, non-numeric, or out-of-range resize factors."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_videocapture.return_value = mock_cap
+
+        # Zero factor
+        with pytest.raises(ValueError):
+            CameraCapture(resize_factor=0.0)
+
+        # Negative factor
+        with pytest.raises(ValueError):
+            CameraCapture(resize_factor=-0.5)
+
+        # Non-numeric string factor
+        with pytest.raises(TypeError):
+            CameraCapture(resize_factor="invalid")
+
+        # None factor
+        with pytest.raises(TypeError):
+            CameraCapture(resize_factor=None)
+
+        # Out of bounds (> 1.0)
+        with pytest.raises(ValueError):
+            CameraCapture(resize_factor=1.5)
 
     @patch("cv2.VideoCapture")
     def test_release_and_cleanup(self, mock_videocapture):

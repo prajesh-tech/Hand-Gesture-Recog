@@ -1,5 +1,5 @@
 """
-Unit tests for HandDetector contour filtering and scoring.
+Unit tests for HandDetector contour filtering, min_contour_score rejection, and public input validation.
 """
 
 import os
@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.hand_detection import HandDetector
+from src.results import HandDetectionResult
 
 
 class TestHandDetector:
@@ -98,8 +99,35 @@ class TestHandDetector:
 
         selected = detector.find_hand_contour(mask)
         assert selected is not None
-        # Hand shape area should be < 10000 px (circle area is ~15393 px)
         assert cv2.contourArea(selected) < 10000.0
+
+    def test_min_contour_score_rejection(self):
+        """Test that candidate with score below min_contour_score is rejected."""
+        detector = HandDetector(min_contour_score=10.0)  # Unattainable score threshold
+        mask = np.zeros((480, 640), dtype=np.uint8)
+        cv2.circle(mask, (300, 200), 40, 255, -1)
+
+        selected = detector.find_hand_contour(mask)
+        assert selected is None
+
+    def test_invalid_mask_inputs(self, detector):
+        """Test public input validation for invalid or empty mask objects."""
+        with pytest.raises(TypeError):
+            detector.find_hand_contour(None)
+
+        with pytest.raises(ValueError):
+            detector.find_hand_contour(np.empty((0, 0), dtype=np.uint8))
+
+        with pytest.raises(ValueError):
+            detector.find_hand_contour(np.zeros((100, 100, 3), dtype=np.uint8))  # 3D array
+
+    def test_process_mask_returns_hand_detection_result(self, detector):
+        """Test process_mask returns HandDetectionResult dataclass."""
+        mask = np.zeros((480, 640), dtype=np.uint8)
+        res = detector.process_mask(mask)
+        assert isinstance(res, HandDetectionResult)
+        assert res.is_hand_detected is False
+        assert res.selected_contour is None
 
     def test_get_bounding_box_and_draw_helpers(self, detector):
         """Test bounding box extraction and drawing utility methods."""
@@ -111,4 +139,3 @@ class TestHandDetector:
         drawn = detector.draw_both(frame, contour)
         assert drawn is not None
         assert drawn.shape == (100, 100, 3)
-

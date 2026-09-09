@@ -1,25 +1,35 @@
 """
-Calibration utilities for saving and loading user's HSV thresholds and skin models.
-Persists calibration data to config/hsv_calibration.json.
+Calibration utilities for saving and loading user's HSV thresholds.
+Persists calibration data to project-relative config/hsv_calibration.json.
 """
 
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
+from src.results import CalibrationResult
+
 
 class CalibrationManager:
-    """Handle save/load of user's HSV calibration data and optional skin model."""
+    """Handle save/load of user's HSV calibration data."""
 
-    CONFIG_DIR = "config"
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
     CALIBRATION_FILE = os.path.join(CONFIG_DIR, "hsv_calibration.json")
+
+    @staticmethod
+    def get_calibration_path() -> str:
+        """Get project-relative calibration file path."""
+        return CalibrationManager.CALIBRATION_FILE
 
     @staticmethod
     def ensure_config_dir_exists() -> None:
         """Create config directory if it doesn't exist."""
-        os.makedirs(CalibrationManager.CONFIG_DIR, exist_ok=True)
+        config_dir = os.path.dirname(CalibrationManager.CALIBRATION_FILE)
+        if config_dir:
+            os.makedirs(config_dir, exist_ok=True)
 
     @staticmethod
     def calibration_exists() -> bool:
@@ -30,10 +40,9 @@ class CalibrationManager:
     def save_calibration(
         lower_hsv: np.ndarray,
         upper_hsv: np.ndarray,
-        statistical_model: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        Save HSV thresholds and optional skin model to calibration file.
+        Save HSV thresholds to calibration file.
         """
         try:
             CalibrationManager.ensure_config_dir_exists()
@@ -48,7 +57,6 @@ class CalibrationManager:
             data = {
                 "lower_hsv": lower_list,
                 "upper_hsv": upper_list,
-                "statistical_model": statistical_model,
             }
 
             with open(CalibrationManager.CALIBRATION_FILE, "w") as f:
@@ -76,6 +84,9 @@ class CalibrationManager:
             with open(CalibrationManager.CALIBRATION_FILE, "r") as f:
                 data = json.load(f)
 
+            if "lower_hsv" not in data or "upper_hsv" not in data:
+                return None
+
             lower = np.array(data["lower_hsv"], dtype=np.uint8)
             upper = np.array(data["upper_hsv"], dtype=np.uint8)
 
@@ -92,27 +103,29 @@ class CalibrationManager:
             return None
 
     @staticmethod
-    def load_skin_model() -> Optional[Dict[str, Any]]:
-        """Load statistical skin model if present in calibration file."""
-        if not CalibrationManager.calibration_exists():
-            return None
-
-        try:
-            with open(CalibrationManager.CALIBRATION_FILE, "r") as f:
-                data = json.load(f)
-            return data.get("statistical_model")
-        except Exception:
-            return None
+    def load_calibration_result() -> CalibrationResult:
+        """Load calibration into structured CalibrationResult."""
+        loaded = CalibrationManager.load_calibration()
+        if loaded is None:
+            return CalibrationResult(
+                success=False,
+                status="FAILED",
+                message="No valid calibration file found",
+            )
+        lower, upper = loaded
+        return CalibrationResult(
+            success=True,
+            status="SUCCESS",
+            lower_hsv=lower,
+            upper_hsv=upper,
+            message="Calibration loaded successfully",
+        )
 
     @staticmethod
     def _is_valid_hsv_range(lower: np.ndarray, upper: np.ndarray) -> bool:
-        """
-        Validate HSV range using SkinDetector.is_valid_hsv_range.
-        """
+        """Validate HSV range using SkinDetector.is_valid_hsv_range."""
         from src.skin_detection import SkinDetector
         return SkinDetector.is_valid_hsv_range(lower, upper)
-
-
 
     @staticmethod
     def delete_calibration() -> bool:

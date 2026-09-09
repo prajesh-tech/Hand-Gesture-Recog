@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.skin_detection import SkinDetector
+from src.results import SkinDetectionResult
 
 
 class TestSkinDetector:
@@ -53,12 +54,18 @@ class TestSkinDetector:
         assert np.all((mask == 0) | (mask == 255))
 
     def test_invalid_and_empty_frame_handling(self, detector):
-        """Test that invalid or empty frames raise ValueError."""
-        with pytest.raises(ValueError, match="Invalid frame"):
+        """Test that invalid or empty frames raise TypeError or ValueError."""
+        with pytest.raises(TypeError):
             detector.detect_skin(None)
 
-        with pytest.raises(ValueError, match="Invalid frame"):
+        with pytest.raises(ValueError):
             detector.detect_skin(np.empty((0, 0, 3), dtype=np.uint8))
+
+        with pytest.raises(ValueError):
+            detector.detect_skin(np.zeros((100, 100), dtype=np.uint8))  # 2D frame
+
+        with pytest.raises(ValueError):
+            detector.detect_skin(np.zeros((100, 100, 4), dtype=np.uint8))  # 4 channels
 
     def test_invalid_morphology_operation_raises_value_error(self, detector):
         """Test that invalid morphology operation name raises ValueError."""
@@ -112,21 +119,16 @@ class TestSkinDetector:
         closed = detector.apply_morphology(hole_mask, operation="close")
         assert np.sum(closed) >= np.sum(hole_mask)
 
-    def test_extract_hsv_from_region(self):
-        """Test extracting HSV range from a synthetic region mask."""
-        frame_bgr = np.zeros((100, 100, 3), dtype=np.uint8)
-        hsv_color = np.array([[[15, 100, 150]]], dtype=np.uint8)
-        bgr_color = cv2.cvtColor(hsv_color, cv2.COLOR_HSV2BGR)[0, 0]
-        frame_bgr[20:80, 20:80] = bgr_color
+    def test_process_frame_returns_result_dataclass(self, detector):
+        """Test that process_frame returns a valid SkinDetectionResult."""
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        res = detector.process_frame(frame)
+        assert isinstance(res, SkinDetectionResult)
+        assert res.mask_raw.shape == (100, 100)
+        assert res.mask_clean.shape == (100, 100)
 
-        mask = np.zeros((100, 100), dtype=np.uint8)
-        mask[20:80, 20:80] = 255
-
-        lower, upper = SkinDetector.extract_hsv_from_region(frame_bgr, mask)
-
-        assert lower is not None
-        assert upper is not None
-        assert len(lower) == 3
-        assert len(upper) == 3
-        assert lower[1] >= 15
-        assert lower[2] >= 35
+    def test_statistical_model_removed(self, detector):
+        """Verify statistical skin model code has been cleanly purged."""
+        assert not hasattr(detector, "build_statistical_model")
+        assert not hasattr(detector, "detect_skin_statistical")
+        assert not hasattr(detector, "statistical_model")
