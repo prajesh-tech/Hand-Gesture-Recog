@@ -53,6 +53,14 @@ class TestMediaPipeDetector:
         with pytest.raises(ValueError):
             MediaPipeDetector(max_num_hands=0)
 
+    def test_missing_model_auto_download_failure(self, tmp_path):
+        """Test that failure during model auto-download raises FileNotFoundError with helpful instructions."""
+        fake_model = str(tmp_path / "models" / "hand_landmarker.task")
+        with patch("os.path.isfile", return_value=False), \
+             patch("urllib.request.urlretrieve", side_effect=OSError("Network down")):
+            with pytest.raises(FileNotFoundError, match="Auto-download failed"):
+                MediaPipeDetector(model_path=fake_model)
+
     def test_input_validation_on_invalid_frames(self):
         """Test defensive input validation on empty, None, or ill-shaped frames."""
         detector = MediaPipeDetector()

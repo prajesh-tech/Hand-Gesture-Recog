@@ -77,15 +77,38 @@ class MediaPipeDetector:
         self.max_num_hands = max_num_hands
         self.static_image_mode = static_image_mode
 
-        resolved_model = model_path or _DEFAULT_MODEL_PATH
+        resolved_model = os.path.abspath(model_path or _DEFAULT_MODEL_PATH)
         if not os.path.isfile(resolved_model):
-            raise FileNotFoundError(
-                f"HandLandmarker model not found at: {resolved_model}\n"
-                "Download it with:\n"
-                "  wget -O models/hand_landmarker.task \\\n"
-                "    https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+            try:
+                os.makedirs(os.path.dirname(resolved_model), exist_ok=True)
+            except OSError:
+                pass
+            model_url = (
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
                 "hand_landmarker/float16/1/hand_landmarker.task"
             )
+            print(f"[MediaPipeDetector] Model not found at: {resolved_model}")
+            print("[MediaPipeDetector] Downloading hand_landmarker.task from MediaPipe CDN...")
+            try:
+                import urllib.request
+                urllib.request.urlretrieve(model_url, resolved_model)
+                print(f"[MediaPipeDetector] ✓ Download complete ({resolved_model})")
+            except Exception as dl_err:
+                if os.path.exists(resolved_model):
+                    try:
+                        os.remove(resolved_model)
+                    except OSError:
+                        pass
+                raise FileNotFoundError(
+                    f"HandLandmarker model not found at: {resolved_model}\n"
+                    f"Auto-download failed: {dl_err}\n"
+                    "Download it manually:\n"
+                    "  [PowerShell (Windows)]:\n"
+                    '    Invoke-WebRequest -Uri "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" -OutFile "models\\hand_landmarker.task"\n'
+                    "  [Bash / Linux / macOS]:\n"
+                    "    curl -L -o models/hand_landmarker.task \\\n"
+                    "      https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+                )
 
         running_mode = VisionTaskRunningMode.IMAGE if static_image_mode else VisionTaskRunningMode.VIDEO
 
