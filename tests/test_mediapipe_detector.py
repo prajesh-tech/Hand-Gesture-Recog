@@ -87,10 +87,10 @@ class TestMediaPipeDetector:
         """Test process_frame when MediaPipe returns no hand landmarks."""
         detector = MediaPipeDetector()
         try:
-            with patch.object(detector.hands, "process") as mock_process:
+            with patch.object(detector.hands, "detect_for_video") as mock_detect:
                 mock_result = MagicMock()
-                mock_result.multi_hand_landmarks = None
-                mock_process.return_value = mock_result
+                mock_result.hand_landmarks = None
+                mock_detect.return_value = mock_result
 
                 blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
                 landmarks, annotated = detector.process_frame(blank_frame)
@@ -113,15 +113,10 @@ class TestMediaPipeDetector:
                 mock_lm.z = -0.05 + i * 0.001
                 mock_landmarks.append(mock_lm)
 
-            mock_hand = MagicMock()
-            mock_hand.landmark = mock_landmarks
-
             mock_result = MagicMock()
-            mock_result.multi_hand_landmarks = [mock_hand]
+            mock_result.hand_landmarks = [mock_landmarks]
 
-            with patch.object(detector.hands, "process", return_value=mock_result), \
-                 patch.object(detector.mp_drawing, "draw_landmarks"):
-
+            with patch.object(detector.hands, "detect_for_video", return_value=mock_result):
                 test_frame = np.full((480, 640, 3), 128, dtype=np.uint8)
                 landmarks, annotated = detector.process_frame(test_frame)
 
@@ -157,10 +152,10 @@ class TestMediaPipeDetector:
             flipped_frame = np.fliplr(frame)  # Not C-contiguous
             assert not flipped_frame.flags.c_contiguous
 
-            with patch.object(detector.hands, "process") as mock_process:
+            with patch.object(detector.hands, "detect_for_video") as mock_detect:
                 mock_result = MagicMock()
-                mock_result.multi_hand_landmarks = None
-                mock_process.return_value = mock_result
+                mock_result.hand_landmarks = None
+                mock_detect.return_value = mock_result
 
                 lms, ann = detector.process_frame(flipped_frame)
                 assert lms is None
@@ -199,13 +194,10 @@ class TestMediaPipeDetector:
                 mock_lm.z = -0.05
                 mock_landmarks.append(mock_lm)
 
-            mock_hand = MagicMock()
-            mock_hand.landmark = mock_landmarks
             mock_result = MagicMock()
-            mock_result.multi_hand_landmarks = [mock_hand]
+            mock_result.hand_landmarks = [mock_landmarks]
 
-            with patch.object(detector.hands, "process", return_value=mock_result), \
-                 patch.object(detector.mp_drawing, "draw_landmarks"):
+            with patch.object(detector.hands, "detect_for_video", return_value=mock_result):
                 test_frame = np.full((480, 640, 3), 128, dtype=np.uint8)
                 landmarks, _ = detector.process_frame(test_frame)
 

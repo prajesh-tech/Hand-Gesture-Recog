@@ -37,6 +37,8 @@ class HandGestureApp:
         mirror: bool = True,
         auto_contrast: bool = False,
         debug: bool = True,
+        bypass_classifier: bool = False,
+        draw_landmark_labels: bool = False,
     ) -> None:
         print("Hand Gesture Recognition System (MediaPipe 3D Landmark Strategy 1)")
         print("=" * 65)
@@ -45,6 +47,8 @@ class HandGestureApp:
         self.frame_height = frame_height
         self.resize_factor = resize_factor
         self.debug = debug
+        self.bypass_classifier = bypass_classifier
+        self.draw_landmark_labels = draw_landmark_labels
         self.frame_count = 0
 
         try:
@@ -67,16 +71,19 @@ class HandGestureApp:
             max_num_hands=1,
             static_image_mode=False,
         )
-        print("✓ MediaPipe 3D Landmark Detector initialized (conf=0.5)")
+        print(f"✓ MediaPipe 3D Landmark Detector initialized (det_conf={min_detection_confidence}, track_conf={min_tracking_confidence})")
 
-        self.gesture_recognizer = LandmarkGestureRecognizer()
-        print("✓ Rule-based geometric Gesture Recognizer initialized")
+        if self.bypass_classifier:
+            print("⚡ CLASSIFIER BYPASS MODE ENABLED: Directly testing MediaPipe 21 landmarks.")
+        else:
+            self.gesture_recognizer = LandmarkGestureRecognizer()
+            print("✓ Rule-based geometric Gesture Recognizer initialized")
 
-        self.gesture_history = GestureHistory(
-            buffer_size=history_buffer_size,
-            consensus_threshold=consensus_threshold,
-        )
-        print("✓ Temporal consensus engine initialized")
+            self.gesture_history = GestureHistory(
+                buffer_size=history_buffer_size,
+                consensus_threshold=consensus_threshold,
+            )
+            print("✓ Temporal consensus engine initialized")
 
         print("=" * 65)
         print("Ready to run. Press 'q' in video window or Ctrl+C to quit.")
@@ -95,8 +102,47 @@ class HandGestureApp:
         fps = self.camera.get_fps()
 
         # Step 1: MediaPipe 3D Landmark Detection & Skeleton Overlay
-        landmarks, annotated_frame = self.detector.process_frame(frame)
+        landmarks, annotated_frame = self.detector.process_frame(
+            frame, draw_labels=self.draw_landmark_labels
+        )
         is_hand_detected = landmarks is not None
+
+        # BYPASS MODE: Test MediaPipe detection directly without classifier
+        if self.bypass_classifier:
+            if is_hand_detected and landmarks is not None:
+                print("HAND DETECTED")
+                print(f"Landmarks: {len(landmarks)}")
+            else:
+                print("NO HAND")
+
+            from src.results import GestureHistoryResult, GestureResult
+            gesture_res = GestureResult(
+                gesture="Bypassed",
+                raw_gesture="Bypassed",
+                confidence=100.0 if is_hand_detected else 0.0,
+                is_hand_detected=is_hand_detected,
+                features=None,
+                confidence_breakdown={"quality": 0.0, "rule_match": 0.0, "stability": 0.0},
+            )
+            history_res = GestureHistoryResult(
+                smoothed_gesture="Bypassed" if is_hand_detected else None,
+                action="TESTING",
+                history=["Bypassed"] if is_hand_detected else [],
+                temporal_confidence=1.0 if is_hand_detected else 0.0,
+            )
+            landmark_res = LandmarkDetectionResult(
+                landmarks=landmarks,
+                annotated_frame=annotated_frame,
+                is_hand_detected=is_hand_detected,
+            )
+            return DetectionFrameResult(
+                frame=frame,
+                fps=fps,
+                gesture_res=gesture_res,
+                history_res=history_res,
+                landmark_res=landmark_res,
+                annotated_frame=annotated_frame,
+            )
 
         # Step 2: Extract spatial geometric features and raw gesture classification
         gesture_res = self.gesture_recognizer.process_gesture(
@@ -125,14 +171,16 @@ class HandGestureApp:
             is_hand_detected=is_hand_detected,
         )
 
-        # Lightweight per-frame debug print
+        # Debug print matching the required diagnostic telemetry
         if self.debug:
-            lm_count = len(landmarks) if landmarks is not None else 0
-            print(
-                f"[DEBUG Frame {self.frame_count:04d}] HandDetected={is_hand_detected} "
-                f"| Landmarks={lm_count:02d} | Raw={raw_gesture or 'None'} "
-                f"| Conf={confidence:.0f}% | FPS={fps:.1f}"
-            )
+            if is_hand_detected and landmarks is not None:
+                print(
+                    f"[DEBUG Frame {self.frame_count:04d}] HAND DETECTED | "
+                    f"Landmarks: {len(landmarks)} | Raw: {raw_gesture or 'None'} "
+                    f"| Conf: {confidence:.0f}% | FPS: {fps:.1f}"
+                )
+            else:
+                print(f"[DEBUG Frame {self.frame_count:04d}] NO HAND | FPS: {fps:.1f}")
 
         return DetectionFrameResult(
             frame=frame,
@@ -147,17 +195,63 @@ class HandGestureApp:
         """Render diagnostic and action HUD on the annotated frame."""
         output_frame = diag.annotated_frame.copy() if diag.annotated_frame is not None else diag.frame.copy()
 
+        # BYPASS MODE HUD
+        if self.bypass_classifier:
+            is_detected = diag.landmark_res.is_hand_detected
+            detect_color = (0, 255, 0) if is_detected else (0, 0, 255)
+            lm_count = len(diag.landmark_res.landmarks) if diag.landmark_res.landmarks is not None else 0
+
+            cv2.putText(
+                output_frame,
+                "MODE: MediaPipe Classifier Bypass (Direct Test)",
+                (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 0),
+                2,
+            )
+            cv2.putText(
+                output_frame,
+                f"MediaPipe Status: {'HAND DETECTED' if is_detected else 'NO HAND'}",
+                (20, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                detect_color,
+                2,
+            )
+            cv2.putText(
+                output_frame,
+                f"Landmarks: {lm_count} / 21",
+                (20, 100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 255, 255),
+                2,
+            )
+            cv2.putText(
+                output_frame,
+                f"FPS: {diag.fps:.1f}",
+                (20, output_frame.shape[0] - 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 0),
+                2,
+            )
+            return output_frame
+
         smoothed = diag.history_res.smoothed_gesture
         action = diag.history_res.action
         confidence = diag.gesture_res.confidence
         raw_gesture = diag.gesture_res.raw_gesture
-        is_detected = diag.gesture_res.is_hand_detected
+        is_detected = diag.landmark_res.is_hand_detected
+        lm_count = len(diag.landmark_res.landmarks) if diag.landmark_res.landmarks is not None else 0
 
-        # Diagnostic HUD Line 1: Hand Detected True/False
+        # Diagnostic HUD Line 1: Hand Detected True/False (MediaPipe keypoints)
         detect_color = (0, 255, 0) if is_detected else (0, 0, 255)
+        detect_text = f"Hand Detected: True ({lm_count} Landmarks)" if is_detected else "Hand Detected: False"
         cv2.putText(
             output_frame,
-            f"Hand Detected: {is_detected}",
+            detect_text,
             (20, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.75,
@@ -201,7 +295,7 @@ class HandGestureApp:
             elif raw_gesture == "Unknown":
                 cv2.putText(
                     output_frame,
-                    f"Gesture: Unknown",
+                    "Gesture: Unknown (Pose not matched)",
                     (20, y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
@@ -275,7 +369,77 @@ class HandGestureApp:
 
 
 def main() -> None:
-    app = HandGestureApp()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Real-Time Hand Gesture Recognition (MediaPipe 3D Landmark Strategy 1)"
+    )
+    parser.add_argument(
+        "--bypass",
+        "--bypass-classifier",
+        dest="bypass_classifier",
+        action="store_true",
+        help="Bypass gesture classifier to directly test MediaPipe hand/landmark detection.",
+    )
+    parser.add_argument(
+        "--min-detection-confidence",
+        type=float,
+        default=0.5,
+        help="Minimum confidence threshold for initial hand detection (default: 0.5, try 0.3 for low light).",
+    )
+    parser.add_argument(
+        "--min-tracking-confidence",
+        type=float,
+        default=0.5,
+        help="Minimum confidence threshold for temporal landmark tracking (default: 0.5).",
+    )
+    parser.add_argument(
+        "--draw-labels",
+        action="store_true",
+        help="Render numeric landmark IDs (0-20) directly on skeleton keypoints.",
+    )
+    parser.add_argument(
+        "--camera-id",
+        type=int,
+        default=0,
+        help="Camera device index (default: 0).",
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=640,
+        help="Target frame width (default: 640).",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=480,
+        help="Target frame height (default: 480).",
+    )
+    parser.add_argument(
+        "--auto-contrast",
+        action="store_true",
+        help="Enable adaptive CLAHE contrast enhancement for dim or backlit environments.",
+    )
+    parser.add_argument(
+        "--no-debug",
+        action="store_true",
+        help="Disable console debug telemetry.",
+    )
+
+    args = parser.parse_args()
+
+    app = HandGestureApp(
+        camera_id=args.camera_id,
+        frame_width=args.width,
+        frame_height=args.height,
+        min_detection_confidence=args.min_detection_confidence,
+        min_tracking_confidence=args.min_tracking_confidence,
+        auto_contrast=args.auto_contrast,
+        debug=not args.no_debug,
+        bypass_classifier=args.bypass_classifier,
+        draw_landmark_labels=args.draw_labels,
+    )
     app.run()
 
 

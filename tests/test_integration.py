@@ -138,3 +138,38 @@ class TestIntegrationStrategy1:
         app.camera.get_frame.return_value = (False, None)
         res = app.process_current_frame()
         assert res is None
+
+    def test_pipeline_bypass_classifier_mode(self, app_pipeline, capsys):
+        """Test classifier bypass mode prints HAND DETECTED and renders bypass overlay."""
+        app = app_pipeline
+        app.bypass_classifier = True
+        app.draw_landmark_labels = True
+
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        app.camera.get_frame.return_value = (True, mock_frame)
+
+        open_palm_lms = create_mock_hand(True, True, True, True, True)
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            mock_proc.return_value = (open_palm_lms, mock_frame.copy())
+            res = app.process_current_frame()
+
+            assert res is not None
+            assert res.landmark_res.is_hand_detected is True
+            assert res.gesture_res.gesture == "Bypassed"
+            assert res.gesture_res.confidence == 100.0
+
+            captured = capsys.readouterr()
+            assert "HAND DETECTED" in captured.out
+            assert "Landmarks: 21" in captured.out
+
+            overlay = app.render_overlay(res)
+            assert isinstance(overlay, np.ndarray)
+
+        # Test NO HAND branch in bypass mode
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            mock_proc.return_value = (None, mock_frame.copy())
+            res = app.process_current_frame()
+            assert res.landmark_res.is_hand_detected is False
+
+            captured = capsys.readouterr()
+            assert "NO HAND" in captured.out
