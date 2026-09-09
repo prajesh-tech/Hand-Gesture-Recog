@@ -1,51 +1,43 @@
 """
-Debug version of main.py that displays comprehensive real-time diagnostics overlay.
-Shows raw/clean skin pixel counts, percentages, HSV bounds, contour scores, gesture, and confidence %.
+Real-time diagnostic and telemetry runner for MediaPipe 3D Landmark Strategy 1.
+Displays comprehensive live metrics: finger ratios, straightness cosines,
+heuristic confidence breakdown (Quality, Rule Match, Stability), and consensus history.
 """
 
 import os
 import sys
-
 import cv2
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.calibration import CalibrationManager
 from src.camera import CameraCapture
 from src.gesture_history import GestureHistory
-from src.gesture_recognition import GestureRecognizer
-from src.hand_detection import HandDetector
-from src.skin_detection import SkinDetector
+from src.gesture_recognition import LandmarkGestureRecognizer
+from src.mediapipe_detector import MediaPipeDetector
 
 
 def debug_run() -> None:
-    """Main debug loop."""
+    """Main real-time diagnostic execution loop."""
     frame_w, frame_h = 640, 480
     camera = CameraCapture(target_width=frame_w, target_height=frame_h)
-    print("✓ Camera initialized")
+    print("✓ Camera initialized successfully")
 
-    calibration = CalibrationManager.load_calibration()
-    if calibration:
-        lower, upper = calibration
-        print(f"✓ Loaded calibration: Lower={list(lower)}, Upper={list(upper)}")
-    else:
-        print("⚠ No saved calibration found. Using default HSV thresholds.")
-        lower, upper = SkinDetector.DEFAULT_LOWER_HSV.copy(), SkinDetector.DEFAULT_UPPER_HSV.copy()
-
-    skin_detector = SkinDetector(lower, upper)
-    hand_detector = HandDetector(
-        min_contour_area=500,
-        frame_width=frame_w,
-        frame_height=frame_h,
+    detector = MediaPipeDetector(
+        min_detection_confidence=0.7,
+        min_tracking_confidence=0.7,
+        max_num_hands=1,
+        static_image_mode=False,
     )
-    gesture_recognizer = GestureRecognizer()
+    print("✓ MediaPipe 3D Landmark Detector initialized")
+
+    gesture_recognizer = LandmarkGestureRecognizer()
     gesture_history = GestureHistory(buffer_size=8, consensus_threshold=4)
 
-    print("\n📊 DEBUG MODE - Real-time Analysis")
-    print("=" * 60)
-    print("Press 'q' to quit")
-    print("=" * 60)
+    print("\n📊 STRATEGY 1 DEBUG MODE - Real-Time 3D Landmark Geometry")
+    print("=" * 70)
+    print("Press 'q' in video window or Ctrl+C to quit")
+    print("=" * 70)
 
     frame_count = 0
 
@@ -53,180 +45,176 @@ def debug_run() -> None:
         while True:
             ret, frame = camera.get_frame()
             if not ret or frame is None:
-                print("✗ Camera error")
+                print("✗ Camera read failure. Exiting.")
                 break
 
             frame_count += 1
-            h, w = frame.shape[:2]
+            fps = camera.get_fps()
 
-            # 1. Skin detection
-            skin_res = skin_detector.process_frame(frame, morphology_op="both")
+            # 1. Landmark detection and skeleton visualization
+            landmarks, annotated = detector.process_frame(frame)
+            is_hand_detected = landmarks is not None
 
-            # 2. Hand detection
-            hand_res = hand_detector.process_mask(skin_res.mask_clean)
-
-            # 3. Extract features and classify the current contour.
+            # 2. Geometric feature extraction and raw classification
             gesture_res = gesture_recognizer.process_gesture(
-                contour=hand_res.selected_contour,
-                contour_score=hand_res.score,
+                landmarks=landmarks,
                 history_confidence=0.0,
             )
 
-            # 4. Update temporal history before calculating confidence.
-            raw_label = gesture_res.raw_gesture if hand_res.is_hand_detected else None
+            # 3. Temporal consensus tracking
+            raw_label = gesture_res.raw_gesture if is_hand_detected else None
             history_res = gesture_history.process_history(raw_label)
-            updated_history_confidence = gesture_history.get_confidence(raw_label)
-            gesture_res.confidence = gesture_recognizer.calculate_confidence(
-                contour=hand_res.selected_contour,
-                contour_score=hand_res.score,
-                features=gesture_res.features,
-                gesture_label=gesture_res.raw_gesture,
-                history_confidence=updated_history_confidence,
-            )
 
-            # 5. Render overlay
-            output = frame.copy()
+            # 4. Confidence recalculation with history consensus
+            updated_hist_conf = gesture_history.get_confidence(raw_label)
+            confidence, breakdown = gesture_recognizer.calculate_confidence(
+                landmarks=landmarks,
+                features=gesture_res.features,
+                gesture_label=raw_label,
+                history_confidence=updated_hist_conf,
+            )
+            gesture_res.confidence = confidence
+            gesture_res.confidence_breakdown = breakdown
+
+            # 5. Diagnostic HUD rendering
+            output = annotated.copy()
             text_y = 25
 
-            fps = camera.get_fps()
+            # System telemetry
             cv2.putText(
                 output,
-                f"Resolution: {w}x{h} | FPS: {fps:.1f}",
+                f"Resolution: {frame_w}x{frame_h} | FPS: {fps:.1f}",
                 (10, text_y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),
                 1,
             )
-            text_y += 22
+            text_y += 24
 
-            cv2.putText(
-                output,
-                f"HSV Lower: {list(lower)} | Upper: {list(upper)}",
-                (10, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 255),
-                1,
-            )
-            text_y += 22
-
-            cv2.putText(
-                output,
-                f"Raw Skin: {skin_res.raw_pixel_count} px ({skin_res.raw_percentage:.1f}%)",
-                (10, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 255, 255),
-                1,
-            )
-            text_y += 22
-
-            cv2.putText(
-                output,
-                f"Clean Skin: {skin_res.clean_pixel_count} px ({skin_res.clean_percentage:.1f}%)",
-                (10, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 255, 255),
-                1,
-            )
-            text_y += 25
-
-            total_cnt = len(hand_res.candidates) + len(hand_res.rejected)
-            cv2.putText(
-                output,
-                f"Contours: {total_cnt} | Candidates: {len(hand_res.candidates)}",
-                (10, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (255, 200, 0),
-                1,
-            )
-            text_y += 25
-
-            if hand_res.is_hand_detected and hand_res.selected_contour is not None:
+            if is_hand_detected and gesture_res.features is not None:
+                feat = gesture_res.features
                 cv2.putText(
                     output,
-                    f"Selected Area: {hand_res.area:.0f} px | Contour Score: {hand_res.score:.2f}",
+                    f"Hand: Detected | Palm Size: {feat['palm_size']:.3f} | Var: {feat['coord_variance']:.5f}",
                     (10, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     (0, 255, 0),
                     1,
                 )
-                text_y += 25
+                text_y += 24
 
-                output = hand_detector.draw_both(output, hand_res.selected_contour)
+                # Finger geometric states
+                thumb = feat["thumb"]
+                idx = feat["index"]
+                mid = feat["middle"]
+                ring = feat["ring"]
+                pnk = feat["pinky"]
+
+                thumb_state = "EXTENDED" if thumb["is_extended"] else "TUCKED"
+                cv2.putText(
+                    output,
+                    f"Thumb: {thumb_state} (spread={thumb['ratio']:.2f}, thr={thumb['ratio_threshold']:.2f})",
+                    (10, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.48,
+                    (0, 255, 255) if thumb["is_extended"] else (180, 180, 180),
+                    1,
+                )
+                text_y += 20
+
+                digits = [("Index", idx), ("Middle", mid), ("Ring", ring), ("Pinky", pnk)]
+                for name, d in digits:
+                    d_state = "EXTENDED" if d["is_extended"] else "CLOSED"
+                    color = (0, 255, 0) if d["is_extended"] else (150, 150, 150)
+                    cv2.putText(
+                        output,
+                        f"{name:6}: {d_state} (ratio={d['ratio']:.2f}/{d['ratio_threshold']:.2f}, cos={d['straightness']:.2f}/{d['straightness_threshold']:.2f})",
+                        (10, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.46,
+                        color,
+                        1,
+                    )
+                    text_y += 20
+
             else:
                 cv2.putText(
                     output,
-                    f"Gesture: No Hand Detected | Confidence: {gesture_res.confidence:.0f}%",
+                    "Hand: NOT DETECTED",
                     (10, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
+                    0.6,
                     (0, 0, 255),
                     2,
                 )
+                text_y += 28
 
-            features = gesture_res.features or {}
-            raw_text = gesture_res.raw_gesture or "None"
-            stable_text = history_res.smoothed_gesture or "None"
-            history_text = ", ".join("None" if item is None else item for item in history_res.history)
-            consensus_label = history_res.smoothed_gesture or gesture_res.raw_gesture
-            consensus_count = (
-                sum(item == consensus_label for item in history_res.history)
-                if consensus_label is not None
-                else 0
+            text_y += 6
+            # Gesture & Confidence breakdown
+            raw_txt = gesture_res.raw_gesture or "None"
+            stable_txt = history_res.smoothed_gesture or "None"
+            action_txt = history_res.action or "NONE"
+
+            cv2.putText(
+                output,
+                f"Raw: {raw_txt}  ->  Stable: {stable_txt} [{action_txt}]",
+                (10, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                (0, 255, 255),
+                2,
             )
-            consensus_text = f"{consensus_count}/{len(history_res.history)}"
+            text_y += 24
 
-            debug_lines = [
-                f"Raw Gesture: {raw_text}",
-                f"Stable Gesture: {stable_text}",
-                f"Defects: {features.get('convexity_defects_count', 0)} | Solidity: {features.get('solidity', 0.0):.3f}",
-                f"Elongation: {features.get('elongation', 0.0):.3f} | Extent: {features.get('extent', 0.0):.3f}",
-                f"History: [{history_text}] | Consensus: {consensus_text}",
-                f"Confidence: {gesture_res.confidence:.1f}% | Temporal: {updated_history_confidence:.2f}",
-            ]
-            for line in debug_lines:
-                cv2.putText(
-                    output,
-                    line,
-                    (10, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
-                    1,
-                )
-                text_y += 22
+            # History buffer display
+            hist_items = [str(x) if x is not None else "_" for x in history_res.history]
+            hist_str = " ".join(hist_items)
+            cv2.putText(
+                output,
+                f"History [{len(history_res.history)}/8]: [{hist_str}]",
+                (10, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (200, 200, 255),
+                1,
+            )
+            text_y += 22
 
-            # Draw ROI overlay for calibration reference
-            roi_frame = frame.copy()
-            cy, cx = h // 2, w // 2
-            rh, rw = int(h * 0.25), int(w * 0.25)
-            cv2.rectangle(roi_frame, (cx - rw, cy - rh), (cx + rw, cy + rh), (0, 255, 0), 2)
+            # Confidence components
+            q = breakdown.get("quality", 0.0)
+            rm = breakdown.get("rule_match", 0.0)
+            st = breakdown.get("stability", 0.0)
+            cv2.putText(
+                output,
+                f"Confidence: {confidence:.0f}%  [Quality: {q:.1f}/30 | Rule: {rm:.1f}/50 | Stability: {st:.1f}/20]",
+                (10, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
+            )
 
-            # Show debug windows
-            cv2.imshow("Main (with stats)", output)
-            cv2.imshow("Skin Mask (raw)", skin_res.mask_raw)
-            cv2.imshow("Skin Mask (cleaned)", skin_res.mask_clean)
-            cv2.imshow("Calibration ROI", roi_frame)
+            cv2.imshow("Strategy 1 Diagnostics", output)
 
             if frame_count % 30 == 0:
                 print(
-                    f"[Frame {frame_count}] Cleaned skin: {skin_res.clean_percentage:.1f}%, "
-                    f"Gesture: {gesture_res.gesture}, Confidence: {gesture_res.confidence:.0f}%"
+                    f"[Frame {frame_count:04d}] Gesture: {gesture_res.raw_gesture} -> {history_res.smoothed_gesture}, "
+                    f"Conf: {confidence:.0f}% (Q:{q:.1f}, R:{rm:.1f}, S:{st:.1f})"
                 )
 
-            key = cv2.waitKey(30) & 0xFF
+            key = cv2.waitKey(10) & 0xFF
             if key == ord("q"):
                 break
 
+    except KeyboardInterrupt:
+        print("\nDiagnostic session interrupted by user.")
     finally:
         cv2.destroyAllWindows()
+        detector.close()
         camera.release()
-        print("✓ Debug session ended")
+        print("✓ Diagnostic session cleanly ended.")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from src.results import CalibrationResult
 class CalibrationManager:
     """Handle save/load of user's HSV calibration data."""
 
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
     CALIBRATION_FILE = os.path.join(CONFIG_DIR, "hsv_calibration.json")
 
@@ -124,7 +124,7 @@ class CalibrationManager:
     @staticmethod
     def _is_valid_hsv_range(lower: np.ndarray, upper: np.ndarray) -> bool:
         """Validate HSV range using SkinDetector.is_valid_hsv_range."""
-        from src.skin_detection import SkinDetector
+        from src.legacy_hsv.skin_detection import SkinDetector
         return SkinDetector.is_valid_hsv_range(lower, upper)
 
     @staticmethod

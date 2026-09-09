@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.hand_detection import HandDetector
+from src.legacy_hsv.hand_detection import HandDetector
 from src.results import HandDetectionResult
 
 

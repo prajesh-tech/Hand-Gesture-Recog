@@ -45,6 +45,14 @@ class HandDetectionResult:
 
 
 @dataclass
+class LandmarkDetectionResult:
+    """Result of MediaPipe hand landmark detection."""
+    landmarks: Optional[List[Dict[str, float]]]
+    annotated_frame: np.ndarray
+    is_hand_detected: bool
+
+
+@dataclass
 class GestureResult:
     """Result of geometric gesture classification and confidence evaluation."""
     gesture: Optional[str]  # e.g., "Open Palm", "Fist", "One Finger", "Two Fingers", "Unknown", None
@@ -52,6 +60,7 @@ class GestureResult:
     confidence: float  # Heuristic confidence score 0.0 to 100.0
     is_hand_detected: bool
     features: Optional[Dict[str, Any]] = None
+    confidence_breakdown: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -68,7 +77,9 @@ class DetectionFrameResult:
     """Complete diagnostic result for a single processed video frame."""
     frame: np.ndarray
     fps: float
-    skin_res: SkinDetectionResult
-    hand_res: HandDetectionResult
     gesture_res: GestureResult
     history_res: GestureHistoryResult
+    landmark_res: Optional[LandmarkDetectionResult] = None
+    annotated_frame: Optional[np.ndarray] = None
+    skin_res: Optional[SkinDetectionResult] = None
+    hand_res: Optional[HandDetectionResult] = None

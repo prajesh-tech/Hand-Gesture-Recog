@@ -1,263 +1,140 @@
 """
-Integration tests for the full pipeline.
-Tests end-to-end processing with synthetic hand-like shapes.
+Integration tests for the MediaPipe 3D Landmark Strategy 1 pipeline.
+Tests end-to-end processing, state pipeline dynamics, temporal consensus,
+and robustness without physical webcam or external network dependencies.
 """
 
-import pytest
-import cv2
-import numpy as np
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+import numpy as np
+import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.camera import CameraCapture
-from src.skin_detection import SkinDetector
-from src.hand_detection import HandDetector
-from src.gesture_recognition import GestureRecognizer
-from src.gesture_history import GestureHistory
 from src.main import HandGestureApp
+from src.results import DetectionFrameResult
+from tests.test_gesture_recognition import create_mock_hand
 
 
-class TestIntegrationSyntheticHands:
-    """Integration tests with synthetic hand-like shapes."""
-    
+class TestIntegrationStrategy1:
+    """Integration test suite for Strategy 1 pipeline."""
+
     @pytest.fixture
-    def setup_pipeline(self):
-        """Set up all pipeline components."""
-        skin_detector = SkinDetector()
-        hand_detector = HandDetector(min_contour_area=500)
-        gesture_recognizer = GestureRecognizer()
-        gesture_history = GestureHistory(buffer_size=10, consensus_threshold=5)
-        
-        return {
-            'skin_detector': skin_detector,
-            'hand_detector': hand_detector,
-            'gesture_recognizer': gesture_recognizer,
-            'gesture_history': gesture_history
-        }
-    
-    def test_full_pipeline_with_circle(self, setup_pipeline):
-        """Test full pipeline with a synthetic circle (Fist-like)."""
-        # Create synthetic frame with a colored circle
-        frame = np.zeros((400, 400, 3), dtype=np.uint8)
-        # Draw circle with a specific color that we can detect
-        cv2.circle(frame, (200, 200), 80, (100, 100, 200), -1)  # Light color in BGR
-        
-        # Step 1: Skin detection - set broad HSV range to detect this color
-        pipeline = setup_pipeline
-        skin_detector = pipeline['skin_detector']
-        
-        # Set a broad HSV range to ensure detection
-        skin_detector.set_hsv_range(
-            np.array([0, 0, 0], dtype=np.uint8),
-            np.array([180, 255, 255], dtype=np.uint8)
-        )
-        
-        mask = skin_detector.detect_and_clean(frame, morphology_op='both')
-        
-        assert mask is not None
-        # May or may not detect with broad range, just verify no crash
-        assert mask.dtype == np.uint8
-        
-        # Step 2: Hand detection
-        hand_detector = pipeline['hand_detector']
-        hand_contour = hand_detector.find_hand_contour(mask)
-        
-        # Step 3: Gesture recognition if contour found
-        if hand_contour is not None:
-            gesture_recognizer = pipeline['gesture_recognizer']
-            gesture = gesture_recognizer.recognize_gesture(hand_contour)
-            assert gesture is None or isinstance(gesture, str)
-        
-        # Step 4: Gesture history
-        gesture_history = pipeline['gesture_history']
-        gesture_history.add_frame(None)
-        
-        assert len(gesture_history.get_history()) == 1
-    
-    def test_full_pipeline_with_elongated_shape(self, setup_pipeline):
-        """Test full pipeline with elongated shape (Finger-like)."""
-        frame = np.zeros((400, 400, 3), dtype=np.uint8)
-        # Draw ellipse (elongated, finger-like)
-        cv2.ellipse(frame, (200, 200), (120, 40), 0, 0, 360, (100, 60, 120), -1)
-        
-        pipeline = setup_pipeline
-        skin_detector = pipeline['skin_detector']
-        
-        # Calibrate to synthetic skin color
-        lower, upper = SkinDetector.extract_hsv_from_region(
-            frame,
-            np.ones((400, 400), dtype=np.uint8) * 255
-        )
-        skin_detector.set_hsv_range(lower, upper)
-        
-        mask = skin_detector.detect_and_clean(frame)
-        hand_detector = pipeline['hand_detector']
-        hand_contour = hand_detector.find_hand_contour(mask)
-        
-        if hand_contour is not None:
-            gesture_recognizer = pipeline['gesture_recognizer']
-            gesture = gesture_recognizer.recognize_gesture(hand_contour)
-            
-            # Could be One Finger or something else
-            assert gesture in {None, "Fist", "Open Palm", "One Finger", "Two Fingers"}
-    
-    def test_full_pipeline_no_hand(self, setup_pipeline):
-        """Test full pipeline when no hand is present."""
-        # Empty frame
-        frame = np.zeros((400, 400, 3), dtype=np.uint8)
-        
-        pipeline = setup_pipeline
-        skin_detector = pipeline['skin_detector']
-        mask = skin_detector.detect_and_clean(frame)
-        
-        hand_detector = pipeline['hand_detector']
-        hand_contour = hand_detector.find_hand_contour(mask)
-        
-        # Should not find a hand
-        assert hand_contour is None
-        
-        # Add None to history
-        gesture_history = pipeline['gesture_history']
-        gesture_history.add_frame(None)
-        
-        # Wait for consensus
-        for _ in range(4):
-            gesture_history.add_frame(None)
-        
-        smoothed = gesture_history.get_smoothed_gesture()
-        assert smoothed is None
-    
-    def test_temporal_smoothing_integration(self, setup_pipeline):
-        """Test that temporal smoothing works across frames."""
-        pipeline = setup_pipeline
-        gesture_history = pipeline['gesture_history']
-        
-        # Simulate frames with some noise
-        gestures = ["Fist", "Fist", "Open Palm", "Fist", "Fist", "Fist", "Fist", "Fist"]
-        
-        for gesture in gestures:
-            gesture_history.add_frame(gesture)
-        
-        smoothed = gesture_history.get_smoothed_gesture()
-        
-        # Should reach consensus on Fist (5+ frames)
-        assert smoothed == "Fist"
+    def app_pipeline(self):
+        """Set up headless HandGestureApp pipeline with mocked camera."""
+        with patch.object(CameraCapture, "__init__", lambda self, *args, **kwargs: None):
+            app = HandGestureApp(history_buffer_size=4, consensus_threshold=3)
+            app.camera = MagicMock()
+            app.camera.get_fps.return_value = 30.0
+            yield app
+            app.cleanup()
 
-    def test_confidence_uses_history_after_current_frame(self, setup_pipeline):
-        pipeline = setup_pipeline
-        frame = np.zeros((400, 400, 3), dtype=np.uint8)
-        cv2.circle(frame, (200, 200), 80, (100, 100, 200), -1)
+    def test_full_pipeline_hand_detection_and_consensus(self, app_pipeline):
+        """Test full pipeline flow from raw frame to stable gesture and action."""
+        app = app_pipeline
+        mock_frame = np.full((480, 640, 3), 100, dtype=np.uint8)
+        app.camera.get_frame.return_value = (True, mock_frame)
 
-        pipeline["skin_detector"].set_hsv_range(
-            np.array([0, 20, 40], dtype=np.uint8),
-            np.array([180, 255, 255], dtype=np.uint8),
-        )
-        history = pipeline["gesture_history"]
-        history.add_frame("Fist")
-        history.add_frame("Open Palm")
+        # Mock Open Palm landmarks
+        open_palm_lms = create_mock_hand(True, True, True, True, True)
 
-        class FakeCamera:
-            def get_frame(self):
-                return True, frame
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            mock_proc.return_value = (open_palm_lms, mock_frame.copy())
 
-            def get_fps(self):
-                return 30.0
+            # Frame 1: Consensus not yet reached (threshold=3)
+            res1 = app.process_current_frame()
+            assert isinstance(res1, DetectionFrameResult)
+            assert res1.gesture_res.raw_gesture == "Open Palm"
+            assert res1.history_res.smoothed_gesture is None
+            assert res1.history_res.action == ""
+            assert res1.gesture_res.confidence > 0.0
 
-        app = HandGestureApp.__new__(HandGestureApp)
-        app.camera = FakeCamera()
-        app.skin_detector = pipeline["skin_detector"]
-        app.hand_detector = pipeline["hand_detector"]
-        app.gesture_recognizer = pipeline["gesture_recognizer"]
-        app.gesture_history = history
+            # Frame 2: Still stabilizing
+            res2 = app.process_current_frame()
+            assert res2.history_res.smoothed_gesture is None
 
-        result = app.process_current_frame()
+            # Frame 3: Consensus reached!
+            res3 = app.process_current_frame()
+            assert res3.history_res.smoothed_gesture == "Open Palm"
+            assert res3.history_res.action == "START"
+            # Stability score should now be high (3 of 3 in history = 1.0 -> +20 pts)
+            assert res3.gesture_res.confidence_breakdown["stability"] == 20.0
+            assert res3.gesture_res.confidence >= 80.0
 
-        assert result is not None
-        assert result.gesture_res.raw_gesture == "Fist"
-        assert result.history_res.history[-1] == "Fist"
-        assert history.get_confidence("Fist") == pytest.approx(2 / 3)
+    def test_gesture_transition_dynamics(self, app_pipeline):
+        """Test transitioning between gestures requires new consensus window."""
+        app = app_pipeline
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        app.camera.get_frame.return_value = (True, mock_frame)
 
-        expected = app.gesture_recognizer.calculate_confidence(
-            result.hand_res.selected_contour,
-            result.hand_res.score,
-            result.gesture_res.features,
-            result.gesture_res.raw_gesture,
-            history_confidence=2 / 3,
-        )
-        assert result.gesture_res.confidence == expected
-    
-    def test_gesture_classification_consistency(self, setup_pipeline):
-        """Test that same shape produces consistent gesture across runs."""
-        gesture_recognizer = setup_pipeline['gesture_recognizer']
-        
-        # Create same synthetic shape multiple times
-        gestures = []
-        for _ in range(5):
-            frame = np.zeros((400, 400, 3), dtype=np.uint8)
-            cv2.circle(frame, (200, 200), 70, (100, 60, 120), -1)
-            
-            # Quick HSV calibration
-            skin_detector = SkinDetector()
-            lower, upper = SkinDetector.extract_hsv_from_region(
-                frame,
-                np.ones((400, 400), dtype=np.uint8) * 255
-            )
-            skin_detector.set_hsv_range(lower, upper)
-            
-            mask = skin_detector.detect_and_clean(frame)
-            hand_detector = HandDetector()
-            hand_contour = hand_detector.find_hand_contour(mask)
-            
-            if hand_contour is not None:
-                gesture = gesture_recognizer.recognize_gesture(hand_contour)
-                gestures.append(gesture)
-        
-        # All gestures should be the same (or at least majority should be)
-        if len(gestures) > 0:
-            most_common = max(set(gestures), key=gestures.count)
-            assert gestures.count(most_common) >= len(gestures) * 0.6  # At least 60% same
+        fist_lms = create_mock_hand(False, False, False, False, False)
+        two_fingers_lms = create_mock_hand(False, True, True, False, False)
 
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            # Feed 3 Fist frames to establish consensus
+            mock_proc.return_value = (fist_lms, mock_frame.copy())
+            for _ in range(3):
+                res = app.process_current_frame()
+            assert res.history_res.smoothed_gesture == "Fist"
+            assert res.history_res.action == "STOP"
 
-class TestPipelineRobustness:
-    """Test robustness of pipeline with edge cases."""
-    
-    def test_pipeline_with_empty_frame(self):
-        """Test pipeline doesn't crash with empty frame."""
-        frame = np.zeros((400, 400, 3), dtype=np.uint8)
-        
-        skin_detector = SkinDetector()
-        mask = skin_detector.detect_and_clean(frame)
-        
-        hand_detector = HandDetector()
-        hand_contour = hand_detector.find_hand_contour(mask)
-        
-        # Should handle gracefully
-        assert hand_contour is None
-    
-    def test_pipeline_with_noise(self):
-        """Test pipeline with noisy frame."""
-        frame = np.random.randint(0, 256, (400, 400, 3), dtype=np.uint8)
-        
-        skin_detector = SkinDetector()
-        mask = skin_detector.detect_and_clean(frame)
-        
-        # Should produce a valid mask
-        assert mask.dtype == np.uint8
-        assert mask.shape == (400, 400)
-    
-    def test_gesture_recognizer_with_extreme_contour(self):
-        """Test gesture recognizer with very small contour."""
-        gesture_recognizer = GestureRecognizer()
-        
-        # Create tiny contour
-        mask = np.zeros((100, 100), dtype=np.uint8)
-        cv2.circle(mask, (50, 50), 2, 255, -1)
-        
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            gesture = gesture_recognizer.recognize_gesture(contours[0])
-            # Should handle gracefully
-            assert gesture is None or isinstance(gesture, str)
+            # Switch to Two Fingers: frame 1 should NOT switch to Two Fingers
+            # (Buffer is ['Fist', 'Fist', 'Fist', 'Two Fingers'] - Fist still has 3 votes)
+            mock_proc.return_value = (two_fingers_lms, mock_frame.copy())
+            res_trans1 = app.process_current_frame()
+            assert res_trans1.gesture_res.raw_gesture == "Two Fingers"
+            assert res_trans1.history_res.smoothed_gesture != "Two Fingers"
+
+            # Frame 2 of Two Fingers: Buffer is ['Fist', 'Fist', 'Two Fingers', 'Two Fingers']
+            # Neither has 3 votes, consensus drops to None
+            res_trans2 = app.process_current_frame()
+            assert res_trans2.history_res.smoothed_gesture is None
+
+            # Frame 3 of Two Fingers: Buffer is ['Fist', 'Two Fingers', 'Two Fingers', 'Two Fingers']
+            # Two Fingers reaches 3 votes -> consensus reached!
+            res_stable = app.process_current_frame()
+            assert res_stable.history_res.smoothed_gesture == "Two Fingers"
+            assert res_stable.history_res.action == "NEXT"
+
+    def test_pipeline_no_hand_detected(self, app_pipeline):
+        """Test pipeline behavior when no hand is present."""
+        app = app_pipeline
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        app.camera.get_frame.return_value = (True, mock_frame)
+
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            mock_proc.return_value = (None, mock_frame.copy())
+            res = app.process_current_frame()
+
+            assert res.landmark_res.is_hand_detected is False
+            assert res.gesture_res.gesture is None
+            assert res.gesture_res.raw_gesture is None
+            assert res.gesture_res.confidence == 0.0
+            assert res.history_res.smoothed_gesture is None
+            assert res.history_res.action == ""
+
+    def test_pipeline_overlay_rendering(self, app_pipeline):
+        """Test that HUD overlay generates valid image array without exceptions."""
+        app = app_pipeline
+        mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        app.camera.get_frame.return_value = (True, mock_frame)
+
+        one_finger_lms = create_mock_hand(False, True, False, False, False)
+        with patch.object(app.detector, "process_frame") as mock_proc:
+            mock_proc.return_value = (one_finger_lms, mock_frame.copy())
+            # Run 3 frames for consensus
+            for _ in range(3):
+                diag = app.process_current_frame()
+
+            overlay = app.render_overlay(diag)
+            assert isinstance(overlay, np.ndarray)
+            assert overlay.shape == (480, 640, 3)
+
+    def test_pipeline_camera_dropped_returns_none(self, app_pipeline):
+        """Test graceful handling when camera stream drops."""
+        app = app_pipeline
+        app.camera.get_frame.return_value = (False, None)
+        res = app.process_current_frame()
+        assert res is None

@@ -9,9 +9,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.calibration import CalibrationManager
-from src.skin_detection import SkinDetector
-from src.results import CalibrationResult
+from src.legacy_hsv.calibration import CalibrationManager
+from src.legacy_hsv.skin_detection import SkinDetector
 
 
 def test_save_and_load_valid_normal_calibration(tmp_path, monkeypatch):

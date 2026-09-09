@@ -1,6 +1,7 @@
 """
-Main application: Real-time hand gesture recognition with HSV-based skin detection.
-Orchestrates camera, preprocessing, skin detection, hand detection, gesture recognition, and confidence scoring.
+Main application: Real-time hand gesture recognition with MediaPipe 3D Landmark Tracking.
+Strategy 1: Modular pipeline orchestrating camera, MediaPipe keypoint tracking,
+rule-based geometric classification, temporal smoothing, and explainable confidence scoring.
 """
 
 import os
@@ -13,29 +14,29 @@ import numpy as np
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.calibration import CalibrationManager
 from src.camera import CameraCapture
 from src.gesture_history import GestureHistory
-from src.gesture_recognition import GestureRecognizer
-from src.hand_detection import HandDetector
-from src.results import CalibrationResult, DetectionFrameResult
-from src.skin_detection import SkinDetector
+from src.gesture_recognition import LandmarkGestureRecognizer
+from src.mediapipe_detector import MediaPipeDetector
+from src.results import DetectionFrameResult, LandmarkDetectionResult
 
 
 class HandGestureApp:
-    """Main application class orchestrating all components."""
+    """Main application class orchestrating the MediaPipe 3D landmark gesture pipeline."""
 
-    
     def __init__(
         self,
         camera_id: int = 0,
         frame_width: int = 640,
         frame_height: int = 480,
         resize_factor: float = 1.0,
-        skip_calibration: bool = False,
+        min_detection_confidence: float = 0.7,
+        min_tracking_confidence: float = 0.7,
+        history_buffer_size: int = 8,
+        consensus_threshold: int = 4,
     ) -> None:
-        print("Hand Gesture Recognition System")
-        print("=" * 50)
+        print("Hand Gesture Recognition System (MediaPipe 3D Landmark Strategy 1)")
+        print("=" * 65)
 
         self.frame_width = frame_width
         self.frame_height = frame_height
@@ -48,354 +49,188 @@ class HandGestureApp:
                 target_height=frame_height,
                 resize_factor=resize_factor,
             )
-            print("Camera initialized")
+            print("✓ Camera initialized successfully")
         except (RuntimeError, ValueError, TypeError) as e:
-            print(f"Camera error: {e!s}")
+            print(f"✗ Camera error: {e!s}")
             sys.exit(1)
 
-        self.skin_detector = SkinDetector()
-        print("Skin detector initialized")
-
-        self.hand_detector = HandDetector(
-            min_contour_area=500,
-            frame_width=frame_width,
-            frame_height=frame_height,
+        self.detector = MediaPipeDetector(
+            min_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
+            max_num_hands=1,
+            static_image_mode=False,
         )
-        print("Hand detector initialized")
+        print("✓ MediaPipe 3D Landmark Detector initialized")
 
-        self.gesture_recognizer = GestureRecognizer()
-        print("Gesture recognizer initialized")
+        self.gesture_recognizer = LandmarkGestureRecognizer()
+        print("✓ Rule-based geometric Gesture Recognizer initialized")
 
-        self.gesture_history = GestureHistory(buffer_size=8, consensus_threshold=4)
-        print("Gesture history (temporal smoothing) initialized")
-
-        self.skip_calibration = skip_calibration
-        self.calibrated = False
-
-        if not skip_calibration:
-            self._handle_calibration()
-        else:
-            self.calibrated = True
-            print("Calibration skipped (using defaults)")
-
-        print("=" * 50)
-        print("Ready to run. Press 'q' to quit, 'c' to recalibrate.")
-        print("=" * 50)
-
-    def _handle_calibration(self) -> None:
-        """Check for saved calibration, or run interactive calibration."""
-        calibration = CalibrationManager.load_calibration()
-        if calibration:
-            lower, upper = calibration
-            self.skin_detector = SkinDetector(lower, upper)
-            self.calibrated = True
-            print("Loaded saved calibration")
-            return
-
-        print("\nCALIBRATION MODE")
-        print("-" * 50)
-        cal_res = self._run_calibration_interactive()
-
-        if cal_res.success and cal_res.lower_hsv is not None and cal_res.upper_hsv is not None:
-            self.skin_detector = SkinDetector(cal_res.lower_hsv, cal_res.upper_hsv)
-            saved = CalibrationManager.save_calibration(cal_res.lower_hsv, cal_res.upper_hsv)
-            self.calibrated = saved
-            print(f"✓ Calibration complete! Lower: {list(cal_res.lower_hsv)}, Upper: {list(cal_res.upper_hsv)}")
-        else:
-            self.calibrated = False
-            print(f"✗ Initial calibration failed/cancelled ({cal_res.status}). Cannot start gesture detection.")
-
-    def _run_calibration_interactive(self) -> CalibrationResult:
-        """
-        Interactive calibration: user places palm in center box and presses SPACE.
-        """
-        print("Instructions:")
-        print("1. Place your PALM in the center box")
-        print("2. Press SPACE to capture 10 valid samples")
-        print("3. Keep hand steady")
-        print("4. Press ESC to cancel")
-        print("-" * 50)
-
-        samples = []
-        sample_count = 0
-        target_samples = 10
-
-        while True:
-            ret, frame = self.camera.get_frame()
-            if not ret or frame is None:
-                print("Camera error during calibration")
-                try:
-                    cv2.destroyWindow("Calibration")
-                except Exception:
-                    pass
-                return CalibrationResult(
-                    success=False,
-                    status="FAILED",
-                    message="Camera read error during calibration",
-                )
-
-            h, w = frame.shape[:2]
-            cv2.rectangle(frame, (w // 4, h // 4), (3 * w // 4, 3 * h // 4), (0, 255, 0), 2)
-            cv2.putText(
-                frame,
-                f"Samples: {sample_count}/{target_samples}",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2,
-            )
-
-            if sample_count > 0:
-                cv2.putText(
-                    frame,
-                    "Sampling...",
-                    (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (0, 255, 0),
-                    2,
-                )
-            else:
-                cv2.putText(
-                    frame,
-                    "Press SPACE to sample | ESC to cancel",
-                    (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (255, 255, 0),
-                    2,
-                )
-
-            cv2.imshow("Calibration", frame)
-            key = cv2.waitKey(30) & 0xFF
-
-            if key == ord(" "):
-                # Sample region matches the displayed green rectangle exactly:
-                # same corners as the cv2.rectangle drawn at (w//4, h//4)→(3*w//4, 3*h//4).
-                x1, y1 = w // 4, h // 4
-                x2, y2 = 3 * w // 4, 3 * h // 4
-
-                inset = 15
-                sample_region = frame[y1 + inset : y2 - inset, x1 + inset : x2 - inset]
-                roi_mask = np.full(sample_region.shape[:2], 255, dtype=np.uint8)
-
-                valid_cnt = SkinDetector.valid_calibration_pixel_count(sample_region, roi_mask)
-                total_cnt = sample_region.shape[0] * sample_region.shape[1]
-                pct = (100.0 * valid_cnt / total_cnt) if total_cnt > 0 else 0.0
-
-                if pct < 50.0:
-                    print(f"Sample rejected ({pct:.1f}% valid). Place more palm inside the box.")
-                    continue
-
-                print(f"Sample {sample_count + 1} accepted: {valid_cnt}/{total_cnt} ({pct:.1f}%)")
-                samples.append(sample_region)
-                sample_count += 1
-
-                if sample_count >= target_samples:
-                    break
-
-            elif key == 27:  # ESC
-                print("Calibration cancelled by user")
-                try:
-                    cv2.destroyWindow("Calibration")
-                except Exception:
-                    pass
-                return CalibrationResult(
-                    success=False,
-                    status="CANCELLED",
-                    message="Calibration cancelled by user",
-                )
-
-        try:
-            cv2.destroyWindow("Calibration")
-        except Exception:
-            pass
-
-        print("\nProcessing calibration samples...")
-        lower, upper, stats = SkinDetector.calibrate_from_samples(samples)
-
-        if not stats.get("calibration_valid", False):
-            error_msg = stats.get("error", "Invalid bounds computed from samples")
-            print(f"Calibration failed: {error_msg}")
-            return CalibrationResult(
-                success=False,
-                status="FAILED",
-                message=error_msg,
-                diagnostics=stats,
-            )
-
-        return CalibrationResult(
-            success=True,
-            status="SUCCESS",
-            lower_hsv=lower,
-            upper_hsv=upper,
-            message="Calibration successful",
-            diagnostics=stats,
+        self.gesture_history = GestureHistory(
+            buffer_size=history_buffer_size,
+            consensus_threshold=consensus_threshold,
         )
+        print("✓ Temporal consensus engine initialized")
+
+        print("=" * 65)
+        print("Ready to run. Press 'q' in video window or Ctrl+C to quit.")
+        print("=" * 65)
 
     def process_current_frame(self) -> Optional[DetectionFrameResult]:
-        """Capture and process a single frame through the full pipeline."""
+        """
+        Execute explicit sequential processing pipeline:
+        Raw Frame -> Landmarks -> Raw Gesture -> History -> Stable Gesture -> Confidence -> Display
+        """
         ret, frame = self.camera.get_frame()
         if not ret or frame is None:
             return None
 
         fps = self.camera.get_fps()
 
-        # Step 1: Skin Detection
-        skin_res = self.skin_detector.process_frame(frame, morphology_op="both")
+        # Step 1: MediaPipe 3D Landmark Detection & Skeleton Overlay
+        landmarks, annotated_frame = self.detector.process_frame(frame)
+        is_hand_detected = landmarks is not None
 
-        # Step 2: Hand Detection
-        hand_res = self.hand_detector.process_mask(skin_res.mask_clean)
-
-        # Step 3: Extract features and classify the current contour.
+        # Step 2: Extract spatial geometric features and raw gesture classification
         gesture_res = self.gesture_recognizer.process_gesture(
-            contour=hand_res.selected_contour,
-            contour_score=hand_res.score,
+            landmarks=landmarks,
             history_confidence=0.0,
         )
 
-        # Step 4: Update history with the raw classification before measuring
-        # temporal confidence for this frame.
-        raw_gesture = gesture_res.raw_gesture if hand_res.is_hand_detected else None
+        # Step 3: Temporal smoothing and consensus voting
+        raw_gesture = gesture_res.raw_gesture if is_hand_detected else None
         history_res = self.gesture_history.process_history(raw_gesture)
 
-        # Step 5: Recalculate confidence from the current raw gesture and the
-        # history state that already includes this frame.
+        # Step 4: Recalculate 0–100% confidence including current frame's contribution to history
         updated_history_confidence = self.gesture_history.get_confidence(raw_gesture)
-        gesture_res.confidence = self.gesture_recognizer.calculate_confidence(
-            contour=hand_res.selected_contour,
-            contour_score=hand_res.score,
+        confidence, breakdown = self.gesture_recognizer.calculate_confidence(
+            landmarks=landmarks,
             features=gesture_res.features,
             gesture_label=gesture_res.raw_gesture,
             history_confidence=updated_history_confidence,
+        )
+        gesture_res.confidence = confidence
+        gesture_res.confidence_breakdown = breakdown
+
+        landmark_res = LandmarkDetectionResult(
+            landmarks=landmarks,
+            annotated_frame=annotated_frame,
+            is_hand_detected=is_hand_detected,
         )
 
         return DetectionFrameResult(
             frame=frame,
             fps=fps,
-            skin_res=skin_res,
-            hand_res=hand_res,
             gesture_res=gesture_res,
             history_res=history_res,
+            landmark_res=landmark_res,
+            annotated_frame=annotated_frame,
         )
+
+    def render_overlay(self, diag: DetectionFrameResult) -> np.ndarray:
+        """Render diagnostic and action HUD on the annotated frame."""
+        output_frame = diag.annotated_frame if diag.annotated_frame is not None else diag.frame.copy()
+
+        smoothed = diag.history_res.smoothed_gesture
+        action = diag.history_res.action
+        confidence = diag.gesture_res.confidence
+        raw_gesture = diag.gesture_res.raw_gesture
+
+        y_offset = 40
+        if diag.gesture_res.is_hand_detected:
+            if smoothed:
+                # Stable recognized gesture
+                cv2.putText(
+                    output_frame,
+                    f"Gesture: {smoothed} ({confidence:.0f}%)",
+                    (20, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.putText(
+                    output_frame,
+                    f"Action: {action}",
+                    (20, y_offset + 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 255, 255),
+                    2,
+                )
+            elif raw_gesture == "Unknown":
+                cv2.putText(
+                    output_frame,
+                    f"Gesture: Unknown ({confidence:.0f}%)",
+                    (20, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 165, 255),
+                    2,
+                )
+            else:
+                # Raw gesture pending temporal consensus
+                cv2.putText(
+                    output_frame,
+                    f"Raw: {raw_gesture} ({confidence:.0f}%) [Stabilizing]",
+                    (20, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (100, 100, 255),
+                    2,
+                )
+        else:
+            cv2.putText(
+                output_frame,
+                f"No Hand Detected | Confidence: {confidence:.0f}%",
+                (20, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2,
+            )
+
+        # Render FPS
+        cv2.putText(
+            output_frame,
+            f"FPS: {diag.fps:.1f}",
+            (20, output_frame.shape[0] - 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 0),
+            2,
+        )
+
+        return output_frame
 
     def run(self) -> None:
         """Main event loop."""
-        if not self.calibrated:
-            print("Not calibrated. Exiting.")
-            return
-
         try:
             while True:
                 diag = self.process_current_frame()
                 if diag is None:
-                    print("Camera dropped. Exiting.")
+                    print("Camera feed dropped. Exiting.")
                     break
 
-                output_frame = diag.frame.copy()
-
-                if diag.hand_res.is_hand_detected and diag.hand_res.selected_contour is not None:
-                    output_frame = self.hand_detector.draw_both(output_frame, diag.hand_res.selected_contour)
-
-                    smoothed = diag.history_res.smoothed_gesture
-                    action = diag.history_res.action
-                    confidence = diag.gesture_res.confidence
-
-                    y_offset = 40
-                    if smoothed == "Unknown":
-                        cv2.putText(
-                            output_frame,
-                            f"Gesture: Unknown | Confidence: {confidence:.0f}%",
-                            (20, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            (0, 165, 255),
-                            2,
-                        )
-                    elif smoothed:
-                        cv2.putText(
-                            output_frame,
-                            f"Gesture: {smoothed} ({confidence:.0f}%)",
-                            (20, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.9,
-                            (0, 255, 0),
-                            2,
-                        )
-                        cv2.putText(
-                            output_frame,
-                            f"Action: {action}",
-                            (20, y_offset + 40),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.9,
-                            (0, 255, 255),
-                            2,
-                        )
-                    else:
-                        cv2.putText(
-                            output_frame,
-                            f"Raw: {diag.gesture_res.raw_gesture} ({confidence:.0f}%)",
-                            (20, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            (100, 100, 255),
-                            2,
-                        )
-                else:
-                    cv2.putText(
-                        output_frame,
-                        f"No Hand Detected | Confidence: {diag.gesture_res.confidence:.0f}%",
-                        (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        (0, 0, 255),
-                        2,
-                    )
-
-                cv2.putText(
-                    output_frame,
-                    f"FPS: {diag.fps:.1f}",
-                    (20, output_frame.shape[0] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (255, 255, 0),
-                    2,
-                )
-
+                output_frame = self.render_overlay(diag)
                 cv2.imshow("Hand Gesture Recognition", output_frame)
 
-                key = cv2.waitKey(30) & 0xFF
+                key = cv2.waitKey(10) & 0xFF
                 if key == ord("q"):
                     break
-                elif key == ord("c"):
-                    try:
-                        cv2.destroyWindow("Hand Gesture Recognition")
-                    except Exception:
-                        pass
-                    print("\nRECALIBRATION REQUESTED")
-                    print("-" * 50)
-                    recal_res = self._run_calibration_interactive()
 
-                    if recal_res.success and recal_res.lower_hsv is not None and recal_res.upper_hsv is not None:
-                        self.skin_detector = SkinDetector(recal_res.lower_hsv, recal_res.upper_hsv)
-                        CalibrationManager.save_calibration(recal_res.lower_hsv, recal_res.upper_hsv)
-                        self.calibrated = True
-                        print("✓ Recalibration Successful!")
-                    else:
-                        if self.calibrated:
-                            print(f"⚠ Recalibration {recal_res.status.lower()}. Previous Calibration Retained.")
-                        else:
-                            print("✗ Recalibration Failed. No valid calibration exists.")
-
+        except KeyboardInterrupt:
+            print("\nApplication interrupted by user.")
         finally:
             self.cleanup()
 
     def cleanup(self) -> None:
-        """Clean up camera and openCV windows."""
+        """Release camera, detector, and window resources safely."""
         cv2.destroyAllWindows()
-        self.camera.release()
-        print("Cleanup complete")
+        if hasattr(self, "detector"):
+            self.detector.close()
+        if hasattr(self, "camera"):
+            self.camera.release()
+        print("✓ Cleanup complete. Session terminated.")
 
 
 def main() -> None:
