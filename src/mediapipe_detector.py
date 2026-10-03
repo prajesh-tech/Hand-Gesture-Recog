@@ -282,7 +282,11 @@ class MediaPipeDetector:
     def close(self) -> None:
         """Release MediaPipe HandLandmarker resources."""
         if hasattr(self, "hands") and self.hands is not None:
-            self.hands.close()
+            try:
+                self.hands.close()
+            except Exception:
+                pass
+            self.hands = None
 
     def __enter__(self) -> "MediaPipeDetector":
         return self

@@ -234,3 +234,22 @@ class TestCameraCapture:
         mock_videocapture.return_value = mock_cap
         with pytest.raises(TypeError, match="force_vga must be a boolean"):
             CameraCapture(force_vga=1)
+
+    @patch("cv2.VideoCapture")
+    def test_force_vga_combined_with_resize_factor(self, mock_videocapture):
+        """Test that force_vga=True downscaling to VGA still applies custom resize_factor proportionally."""
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {3: 1920.0, 4: 1080.0, 5: 30.0}.get(prop, 0.0)
+        hd_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        mock_cap.read.return_value = (True, hd_frame)
+        mock_videocapture.return_value = mock_cap
+
+        camera = CameraCapture(camera_id=0, force_vga=True, resize_factor=0.5)
+        # Dimensions based on 640x480 VGA base scaled by 0.5 -> 320x240
+        assert camera.get_frame_dimensions() == (320, 240)
+
+        ret, frame = camera.get_frame()
+        assert ret is True
+        assert frame.shape == (240, 320, 3)
+        assert frame.flags.c_contiguous

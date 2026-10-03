@@ -173,8 +173,8 @@ class CameraCapture:
                     interpolation=cv2.INTER_LINEAR,
                 )
 
-            # Apply additional resize_factor on top of the VGA base
-            elif self.resize_factor < 1.0:
+            # Apply additional resize_factor if configured
+            if self.resize_factor < 1.0:
                 new_width = int(frame.shape[1] * self.resize_factor)
                 new_height = int(frame.shape[0] * self.resize_factor)
                 frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
@@ -214,7 +214,9 @@ class CameraCapture:
 
     def get_frame_dimensions(self) -> Tuple[int, int]:
         """Get current processed frame dimensions (width, height) after resizing."""
-        return int(self.actual_width * self.resize_factor), int(self.actual_height * self.resize_factor)
+        base_w = min(self.actual_width, self.BLAZEPALM_SAFE_WIDTH) if self.force_vga and self.actual_width > self.BLAZEPALM_SAFE_WIDTH else self.actual_width
+        base_h = min(self.actual_height, self.BLAZEPALM_SAFE_HEIGHT) if self.force_vga and self.actual_height > self.BLAZEPALM_SAFE_HEIGHT else self.actual_height
+        return int(base_w * self.resize_factor), int(base_h * self.resize_factor)
 
     def get_fps(self) -> float:
         """Get measured FPS from recent frames."""

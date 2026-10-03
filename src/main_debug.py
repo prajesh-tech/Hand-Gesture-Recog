@@ -196,7 +196,8 @@ def debug_run() -> None:
                 1,
             )
 
-            cv2.imshow("Strategy 1 Diagnostics", output)
+            window_name = "Strategy 1 Diagnostics"
+            cv2.imshow(window_name, output)
 
             if frame_count % 30 == 0:
                 print(
@@ -206,6 +207,8 @@ def debug_run() -> None:
 
             key = cv2.waitKey(10) & 0xFF
             if key == ord("q"):
+                break
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
     except KeyboardInterrupt:

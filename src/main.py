@@ -18,7 +18,12 @@ from src.camera import CameraCapture
 from src.gesture_history import GestureHistory
 from src.gesture_recognition import LandmarkGestureRecognizer
 from src.mediapipe_detector import MediaPipeDetector
-from src.results import DetectionFrameResult, LandmarkDetectionResult
+from src.results import (
+    DetectionFrameResult,
+    GestureHistoryResult,
+    GestureResult,
+    LandmarkDetectionResult,
+)
 
 
 class HandGestureApp:
@@ -109,13 +114,13 @@ class HandGestureApp:
 
         # BYPASS MODE: Test MediaPipe detection directly without classifier
         if self.bypass_classifier:
-            if is_hand_detected and landmarks is not None:
-                print("HAND DETECTED")
-                print(f"Landmarks: {len(landmarks)}")
-            else:
-                print("NO HAND")
+            if self.debug:
+                if is_hand_detected and landmarks is not None:
+                    print("HAND DETECTED")
+                    print(f"Landmarks: {len(landmarks)}")
+                else:
+                    print("NO HAND")
 
-            from src.results import GestureHistoryResult, GestureResult
             gesture_res = GestureResult(
                 gesture="Bypassed",
                 raw_gesture="Bypassed",
@@ -347,10 +352,13 @@ class HandGestureApp:
                     break
 
                 output_frame = self.render_overlay(diag)
-                cv2.imshow("Hand Gesture Recognition", output_frame)
+                window_name = "Hand Gesture Recognition"
+                cv2.imshow(window_name, output_frame)
 
                 key = cv2.waitKey(10) & 0xFF
                 if key == ord("q"):
+                    break
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
 
         except KeyboardInterrupt:

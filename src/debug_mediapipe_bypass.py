@@ -136,9 +136,12 @@ def run_bypass_diagnostic(
                 1,
             )
 
-            cv2.imshow("MediaPipe Detection Diagnostic", annotated_frame)
+            window_name = "MediaPipe Detection Diagnostic"
+            cv2.imshow(window_name, annotated_frame)
             key = cv2.waitKey(10) & 0xFF
             if key == ord("q"):
+                break
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
     except KeyboardInterrupt:
