@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.skin_detection import SkinDetector
+from src.legacy_hsv.skin_detection import SkinDetector
 from src.results import SkinDetectionResult
 
 

@@ -52,8 +52,11 @@ class GestureHistory:
         Args:
             gesture_label: Predicted gesture ("Fist", "Open Palm", "One Finger", "Two Fingers", None)
         """
-        # Unknown is an ambiguous frame, not a competing gesture vote.
-        self.history.append(None if gesture_label == "Unknown" else gesture_label)
+        # Unknown and No Hand Detected are ambiguous/empty frames, not competing gesture votes.
+        if gesture_label in ("Unknown", "No Hand Detected", None):
+            self.history.append(None)
+        else:
+            self.history.append(gesture_label)
 
     def get_smoothed_gesture(self) -> Optional[str]:
         """

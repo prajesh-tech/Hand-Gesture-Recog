@@ -1,29 +1,36 @@
-# SKILLS.md — Technical Skills Reference
+# SKILLS.md — Technical Skills Reference (Strategy 1)
 
-This document outlines the computer vision, software engineering, and mathematical skills implemented in the Real-Time Hand Gesture Recognition (HGR) project.
+This document outlines the computer vision, spatial mathematics, and software engineering skills implemented in the Real-Time Hand Gesture Recognition (HGR Strategy 1) project.
 
 ---
 
 ## 🛠️ Core Technical Skills
 
-### 1. Classical Computer Vision & Image Processing
-- **HSV Color-Space Segmentation**: Converting BGR video frames to HSV ($H \in [0, 180], S \in [0, 255], V \in [0, 255]$) to decouple chromaticity from illumination. Handling hue wrap-around ($H_{\text{lower}} > H_{\text{upper}}$) via dual-mask bitwise OR operations.
-- **Morphological Cleaning**: Applying structuring elements (`cv2.MORPH_ELLIPSE`) for `MORPH_OPEN` (noise removal) and `MORPH_CLOSE` (hole filling).
-- **Contour Analysis**: Boundary tracing (`cv2.findContours`), arc length calculation, area integration, and bounding box computation.
+### 1. 3D Spatial Keypoint Tracking
+- **MediaPipe Hands Pipeline**: Extracting 21 anatomical landmarks $(x, y, z)$ normalized to image coordinates with relative depth estimates.
+- **Decoupled Architecture**: Encapsulating keypoint extraction and skeleton visualization (`MediaPipeDetector`) strictly separate from classification logic.
+- **Skeleton Rendering**: Visualizing hand topology via anatomical connections using OpenCV and drawing utilities.
 
-### 2. Computational Geometry & Feature Engineering
-- **Convex Hull & Convexity Defects**: Calculating `cv2.convexHull` and extracting finger valleys using `cv2.convexityDefects`.
-- **Geometric Metrics**: Computing compactness metrics including Solidity ($\text{Area} / \text{Hull Area}$), Extent ($\text{Area} / \text{Bounding Box Area}$), Circularity ($4\pi \times \text{Area} / \text{Perimeter}^2$), and Elongation ($\max(\text{Aspect Ratio}, 1 / \text{Aspect Ratio})$).
+### 2. Computational Geometry & Vector Mathematics
+- **3D Euclidean Distance Ratios**: Computing scale-invariant radial extension ratios:
+  $$\frac{\text{dist}(\text{Wrist}, \text{Tip})}{\text{dist}(\text{Wrist}, \text{PIP})}$$
+- **Vector Dot Product Straightness**: Evaluating joint collinearity and straightness via vector dot product angles:
+  $$\cos\theta = \frac{\vec{v}_1 \cdot \vec{v}_2}{\|\vec{v}_1\| \|\vec{v}_2\|}$$
+- **Normalized Thumb Spread Geometry**: Measuring thumb abduction/adduction relative to lateral palm anchors (`Wrist` and `Pinky_MCP`).
+- **Rigid-Body Invariance**: Mathematical formulation ensuring gesture classifications remain strictly invariant to 2D/3D rotation, uniform scaling, and spatial translation.
 
-### 3. Software Architecture & Design Patterns
-- **Pipeline Architecture**: Decoupled, modular component structure (`CameraCapture` $\to$ `SkinDetector` $\to$ `HandDetector` $\to$ `GestureRecognizer` $\to$ `GestureHistory`).
-- **Type-Safe Data Structures**: Utilizing dataclasses (`results.py`) for explicit communication contracts between processing stages.
-- **State Machine Calibration**: Safe state management ensuring failed recalibration retains valid saved state without corrupting persistent configuration.
+### 3. Heuristic Confidence Evaluation & Decision Logic
+- **Structural Plausibility Checks**: Evaluating landmark coordinate variance and anatomical proportions to detect degenerate or collapsed predictions.
+- **Decision Boundary Margin Evaluation**: Quantifying how decisively finger ratios exceed or fall below classification thresholds.
+- **Temporal Stability Weighting**: Integrating history buffer consensus agreement into real-time confidence scores.
 
-### 4. Robust Testing & Verification
-- **Pytest Suite**: Complete unit, integration, and robustness testing without physical hardware dependencies.
-- **Mocking & Synthetic Data**: Mocking `cv2.VideoCapture` hardware boundaries and generating synthetic geometric contours for deterministic automated testing.
+### 4. Temporal Smoothing & State Machines
+- **Sliding-Window Consensus Voting**: Requiring consecutive agreement across a rolling history buffer (`GestureHistory`) to eliminate frame-to-frame label flicker.
+- **Ambiguous State Rejection**: Preventing `Unknown` or empty (`None`) frames from competing as candidate votes during consensus formation.
 
-### 5. Input Validation & Resource Management
-- **Defensive API Guardrails**: Explicit type and shape checking on public entry points to prevent unhandled C++ exceptions in OpenCV bindings.
-- **Safe Resource Cleanup**: Guaranteeing resource release (`VideoCapture.release()`) on error paths, exceptions, and process exit.
+### 5. Defensive Software Engineering & Testing
+- **Type-Safe Result Structures**: Passing explicit, typed dataclasses (`results.py`) between processing stages.
+- **Strict Decoupling & Dependency Isolation**: Ensuring `LandmarkGestureRecognizer` operates on pure Python dictionaries with zero imports from MediaPipe.
+- **Synthetic Test Generation**: Constructing canonical 3D landmark arrays for automated testing.
+- **Transformation Invariance Verification**: Programmatically applying 2D and 3D rotation matrices, translations, and scaling to verify gesture invariance.
+- **Offline Pytest Execution**: Achieving 100% test coverage without hardware camera or external network dependencies.

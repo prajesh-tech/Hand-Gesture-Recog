@@ -41,3 +41,7 @@ config/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Models
+models/*.task
+!models/.gitkeep
